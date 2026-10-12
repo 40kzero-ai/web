@@ -182,11 +182,10 @@ export const BlurNode: NodeDef = {
   description: 'Gaussian blur, resolution independent (radius relative to map width).',
   ...IN_OUT,
   params: [{ key: 'radius', label: 'Radius', type: 'float', default: 0.005, min: 0, max: 0.1, step: 0.0005 }],
-  evaluate(engine, inputs) {
-    return { height: blur(engine, need(inputs.height, 'Blur'), 0) };
+  evaluate(engine, inputs, p) {
+    return { height: blur(engine, need(inputs.height, 'Blur'), Number(p.radius)) };
   },
 };
-BlurNode.evaluate = (engine, inputs, p) => ({ height: blur(engine, need(inputs.height, 'Blur'), Number(p.radius)) });
 
 export const LevelsNode: NodeDef = {
   type: 'levels',

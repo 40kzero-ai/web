@@ -102,6 +102,7 @@ new PropertiesPanel(document.getElementById('props')!, state);
 // ---- Build scheduling ----
 let lastBuild: { preview: boolean; width: number; height: number } | null = null;
 let pending: 'preview' | 'full' | null = null;
+let currentKind: 'preview' | 'full' | null = null;
 let timer: number | undefined;
 
 function previewSize(): [number, number] {
@@ -116,7 +117,13 @@ function setProgress(f: number, msg: string): void {
 }
 
 async function runBuild(kind: 'preview' | 'full'): Promise<void> {
-  if (builder.building) { pending = kind; builder.cancel(); return; }
+  if (builder.building) {
+    // A preview never interrupts an explicit full build; anything else restarts with the latest graph.
+    pending = pending === 'full' ? 'full' : kind;
+    if (!(kind === 'preview' && currentKind === 'full')) builder.cancel();
+    return;
+  }
+  currentKind = kind;
   const target = state.selected ?? state.graph.output;
   if (!target) { setProgress(0, 'Graph is empty — add a node.'); viewport.setContent({ geometry: null, overlay: null, color: null }); return; }
   const [w, h] = kind === 'preview' ? previewSize() : [state.settings.width, state.settings.height];
@@ -125,7 +132,6 @@ async function runBuild(kind: 'preview' | 'full'): Promise<void> {
   const cancelBtn = document.getElementById('cancel') as HTMLButtonElement;
   buildBtn.disabled = true; cancelBtn.disabled = false;
   builder.onProgress = setProgress;
-  const t0 = performance.now();
   try {
     const res = await builder.build(state.graph, {
       width: w, height: h, heightRatio: state.settings.heightRatio,
@@ -144,7 +150,7 @@ async function runBuild(kind: 'preview' | 'full'): Promise<void> {
     else { setProgress(0, `Error: ${msg}`); console.error(e); }
   } finally {
     buildBtn.disabled = false; cancelBtn.disabled = true;
-    void t0;
+    currentKind = null;
     if (pending) { const k = pending; pending = null; void runBuild(k); }
   }
 }

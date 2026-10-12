@@ -1,4 +1,4 @@
-import { HEADER, SAMPLING } from './common';
+import { HEADER, SAMPLING, NOISE } from './common';
 
 /**
  * Hydraulic erosion (virtual pipes model, Mei et al. 2007 with the depth-limited capacity of
@@ -92,9 +92,12 @@ void main() {
   float bb = fetchC(uState, p + ivec2(0, -1)).r, bt = fetchC(uState, p + ivec2(0, 1)).r;
   vec2 g = vec2(br - bl, bt - bb) * 0.5;
   float sinA = length(g) / sqrt(1.0 + dot(g, g));
+  // Capacity follows discharge per unit width (velocity x depth): thin sheet flow carries little,
+  // converging channels carry a lot, which is the positive feedback that carves drainage networks.
+  // Capacity fades out in deep water (lakes) following Jako & Toth.
   float lmax = 1.0 - smoothstep(0.0, uDepthMax, d1);
-  float depthGate = smoothstep(0.0, 0.02, d1);
-  float C = uKc * max(sinA, uMinSlope) * vl * lmax * depthGate;
+  float q = vl * min(d1, 1.0);
+  float C = uKc * max(sinA, uMinSlope) * q * lmax;
 
   float s = st.b;
   vec4 maps = texelFetch(uMaps, p, 0);
@@ -131,9 +134,9 @@ void main() {
   oMaps = maps;
 }`;
 
-export const ADVECT_PASS = `${HEADER}${SAMPLING}
+export const ADVECT_PASS = `${HEADER}${SAMPLING}${NOISE}
 uniform sampler2D uState; uniform sampler2D uVel;
-uniform float uEvap; uniform float uRain;
+uniform float uEvap; uniform float uRain; uniform int uIter;
 out vec4 o;
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
@@ -141,7 +144,9 @@ void main() {
   vec2 v = texelFetch(uVel, p, 0).xy;
   vec2 src = vec2(p) + 0.5 - v;
   float s = sampleBilinearPx(uState, src).b;
-  float d = st.g * (1.0 - uEvap) + uRain;
+  // Spatially jittered rain breaks the grid symmetry so channels compete instead of forming flutes.
+  float jitter = 0.5 + hash2f(p, uint(uIter) * 7919u);
+  float d = st.g * (1.0 - uEvap) + uRain * jitter;
   o = vec4(st.r, d, max(s, 0.0), st.a);
 }`;
 

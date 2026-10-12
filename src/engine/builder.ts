@@ -114,8 +114,7 @@ export class Builder {
         evaluated.push(n.id);
       }
       // Drop cache entries for deleted nodes.
-      const ids = new Set(graph.nodes.map((n) => n.id));
-      for (const id of [...this.cache.keys()]) if (!ids.has(id)) this.invalidate(new Set([...this.cache.keys()].filter((k) => k !== id)));
+      this.invalidate(new Set(graph.nodes.map((n) => n.id)));
       const outputs = new Map<string, NodeOutputs>();
       for (const n of todo) outputs.set(n.id, this.cache.get(n.id)!.outputs);
       await this.engine.sync();

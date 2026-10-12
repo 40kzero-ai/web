@@ -10,11 +10,16 @@ const QUALITY_CAP: Record<string, number> = { low: 1024, medium: 2048, high: 409
 
 interface Level { w: number; h: number; iters: number; }
 
+/**
+ * Resolution pyramid for progressive erosion. Erosion per iteration in height units scales with
+ * 1 / level width (a coarse cell is several fine cells), so coarser levels get fewer iterations.
+ */
 function planLevels(erosionW: number, erosionH: number, iterations: number): Level[] {
   const levels: Level[] = [];
   let w = erosionW, h = erosionH;
   while (true) {
-    levels.unshift({ w: Math.round(w), h: Math.round(h), iters: iterations });
+    const iters = Math.max(10, Math.round(iterations * Math.sqrt(w / erosionW)));
+    levels.unshift({ w: Math.round(w), h: Math.round(h), iters });
     if (w <= 400 || levels.length >= 4) break;
     w /= 2; h /= 2;
   }
@@ -38,7 +43,7 @@ export const ErosionNode: NodeDef = {
     { key: 'deposit', label: 'Deposit', kind: 'height' },
   ],
   params: [
-    { key: 'iterations', label: 'Duration', type: 'int', default: 400, min: 10, max: 4000, step: 10, hint: 'Iterations at the finest level; the build time budget may shorten this' },
+    { key: 'iterations', label: 'Duration', type: 'int', default: 500, min: 10, max: 4000, step: 10, hint: 'Iterations at the finest level; the build time budget may shorten this' },
     { key: 'quality', label: 'Detail', type: 'select', default: 'medium', options: [
       { value: 'low', label: 'Low (1K)' }, { value: 'medium', label: 'Medium (2K)' }, { value: 'high', label: 'High (4K)' }, { value: 'ultra', label: 'Ultra (full)' }],
       hint: 'Maximum simulation resolution; details are restored from the input above it' },
@@ -48,8 +53,8 @@ export const ErosionNode: NodeDef = {
     { key: 'deposition', label: 'Deposition', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
     { key: 'evaporation', label: 'Evaporation', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
     { key: 'downcutting', label: 'Downcutting', type: 'float', default: 0.5, min: 0.05, max: 1, step: 0.01, hint: 'Depth limit of channel erosion (lower = deeper channels)' },
-    { key: 'thermal', label: 'Talus slippage', type: 'float', default: 0.25, min: 0, max: 0.5, step: 0.01 },
-    { key: 'talusAngle', label: 'Talus angle', type: 'float', default: 38, min: 5, max: 80, step: 1 },
+    { key: 'thermal', label: 'Talus slippage', type: 'float', default: 0, min: 0, max: 1, step: 0.01, hint: 'Gentle scree creep during erosion; strong values soften fine ridges' },
+    { key: 'talusAngle', label: 'Talus angle', type: 'float', default: 45, min: 5, max: 80, step: 1 },
     { key: 'flowPower', label: 'Flow contrast', type: 'float', default: 0.5, min: 0.1, max: 1, step: 0.05 },
   ],
   async evaluate(engine, inputs, p, opts) {
@@ -63,14 +68,15 @@ export const ErosionNode: NodeDef = {
 
     const hsFor = (w: number) => opts.heightRatio * w;
     const rain = Number(p.rain) * 0.004;
+    // Rate constants were tuned so that ~300-500 iterations keep ridge detail while carving drainage.
     const uniforms = {
       uPipe: 0.9,
-      uKc: Number(p.capacity) * 0.6,
-      uKs: Number(p.softness) * 0.25,
+      uKc: Number(p.capacity) * 1.0,
+      uKs: Number(p.softness) * 0.15,
       uKd: 0.05 + Number(p.deposition) * 0.5,
       uDepthMax: Number(p.downcutting) * 4.0,
       uMinSlope: 0.02,
-      uThermal: Number(p.thermal),
+      uThermal: Number(p.thermal) * 0.1,
       uTalus: Math.tan((Number(p.talusAngle) * Math.PI) / 180),
       uVmax: 3.0,
       uEvap: 0.005 + Number(p.evaporation) * 0.04,
@@ -134,7 +140,7 @@ export const ErosionNode: NodeDef = {
             uKc: uniforms.uKc, uKs: uniforms.uKs, uKd: uniforms.uKd, uDepthMax: uniforms.uDepthMax, uMinSlope: uniforms.uMinSlope,
             uThermal: uniforms.uThermal, uTalus: uniforms.uTalus, uVmax: uniforms.uVmax,
           }, [stateB, vel, mapsB]);
-          engine.run('erosion_advect', () => ADVECT_PASS, { uState: stateB, uVel: vel, uEvap: uniforms.uEvap, uRain: uniforms.uRain }, stateA);
+          engine.run('erosion_advect', () => ADVECT_PASS, { uState: stateB, uVel: vel, uEvap: uniforms.uEvap, uRain: uniforms.uRain, uIter: i + k }, stateA);
           [fluxA, fluxB] = [fluxB, fluxA];
           [mapsA, mapsB] = [mapsB, mapsA];
         }
@@ -148,7 +154,9 @@ export const ErosionNode: NodeDef = {
         // Re-plan this level's iteration count against the deadline.
         const now = performance.now();
         const timeLeft = (opts.deadline - now) * opts.timeShare;
-        const levelShare = timeLeft * ((L.w * L.h * (L.iters - i)) / Math.max(remainingCost - doneCost + (li === 0 ? 0 : 0), 1));
+        const levelRemaining = L.w * L.h * (L.iters - i);
+        const allRemaining = Math.max(remainingCost - L.w * L.h * i, 1);
+        const levelShare = timeLeft * (levelRemaining / allRemaining);
         const affordable = i + Math.floor(Math.max(levelShare, 0) / (costPerPixelIter * L.w * L.h));
         if (affordable < planned) { planned = Math.max(i, affordable); budgetHit = true; }
         opts.progress(doneCost / totalCost, `Erosion ${L.w}×${L.h}: ${i}/${planned} iterations`);
