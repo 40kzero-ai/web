@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gaea Web — Procedural Terrain</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cpath fill=%27%234f8cff%27 d=%27M2 28L12 8l6 10 4-5 8 15z%27/%3E%3C/svg%3E" />
+    <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const a of document.querySelectorAll('link[rel="modulepreload"]'))i(a);new MutationObserver(a=>{for(const n of a)if(n.type==="childList")for(const s of n.addedNodes)s.tagName==="LINK"&&s.rel==="modulepreload"&&i(s)}).observe(document,{childList:!0,subtree:!0});function e(a){const n={};return a.integrity&&(n.integrity=a.integrity),a.referrerPolicy&&(n.referrerPolicy=a.referrerPolicy),a.crossOrigin==="use-credentials"?n.credentials="include":a.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function i(a){if(a.ep)return;a.ep=!0;const n=e(a);fetch(a.href,n)}})();class vt{gl;canvas;caps;quadVao;constructor(t){this.canvas=t??document.createElement("canvas");const e=this.canvas.getContext("webgl2",{antialias:!1,depth:!0,stencil:!1,alpha:!1,premultipliedAlpha:!1,preserveDrawingBuffer:!1,powerPreference:"high-performance"});if(!e)throw new Error("WebGL2 is not supported by this browser.");if(this.gl=e,!e.getExtension("EXT_color_buffer_float"))throw new Error("EXT_color_buffer_float is required (float render targets).");const i=e.getExtension("WEBGL_debug_renderer_info");this.caps={maxTextureSize:e.getParameter(e.MAX_TEXTURE_SIZE),maxDrawBuffers:e.getParameter(e.MAX_DRAW_BUFFERS),floatLinear:!!e.getExtension("OES_texture_float_linear"),renderer:i?e.getParameter(i.UNMASKED_RENDERER_WEBGL):e.getParameter(e.RENDERER)};const a=e.createVertexArray();if(!a)throw new Error("Failed to create VAO");this.quadVao=a,e.disable(e.DEPTH_TEST),e.disable(e.BLEND),e.disable(e.CULL_FACE),e.pixelStorei(e.UNPACK_ALIGNMENT,1),e.pixelStorei(e.PACK_ALIGNMENT,1)}drawQuad(){const t=this.gl;t.bindVertexArray(this.quadVao),t.drawArrays(t.TRIANGLES,0,3),t.bindVertexArray(null)}sync(){const t=this.gl,e=t.fenceSync(t.SYNC_GPU_COMMANDS_COMPLETE,0);return e?(t.flush(),new Promise(i=>{const a=()=>{const n=t.clientWaitSync(e,0,0);n===t.ALREADY_SIGNALED||n===t.CONDITION_SATISFIED||n===t.WAIT_FAILED?(t.deleteSync(e),i()):setTimeout(a,2)};a()})):(t.finish(),Promise.resolve())}checkError(t){const e=this.gl.getError();e!==this.gl.NO_ERROR&&console.warn(`WebGL error ${e.toString(16)} at ${t}`)}}function he(o,t){switch(t){case"R32F":return{internal:o.R32F,format:o.RED,type:o.FLOAT,bytes:4};case"RG32F":return{internal:o.RG32F,format:o.RG,type:o.FLOAT,bytes:8};case"RGBA32F":return{internal:o.RGBA32F,format:o.RGBA,type:o.FLOAT,bytes:16};case"RGBA16F":return{internal:o.RGBA16F,format:o.RGBA,type:o.HALF_FLOAT,bytes:8};case"RGBA8":return{internal:o.RGBA8,format:o.RGBA,type:o.UNSIGNED_BYTE,bytes:4}}}class gt{constructor(t){this.ctx=t;const e=t.gl.createFramebuffer();if(!e)throw new Error("Failed to create framebuffer");this.fbo=e}free=new Map;nextId=1;fbo;live=new Set;bytesAllocated=0;key(t,e,i){return`${t}x${e}:${i}`}acquire(t,e,i){const a=this.key(t,e,i),n=this.free.get(a);if(n&&n.length){const m=n.pop();return m.refs=1,this.live.add(m),m}const s=this.ctx.gl,r=he(s,i),l=s.createTexture();if(!l)throw new Error("Failed to create texture");if(s.bindTexture(s.TEXTURE_2D,l),s.texStorage2D(s.TEXTURE_2D,1,r.internal,t,e),s.texParameteri(s.TEXTURE_2D,s.TEXTURE_MIN_FILTER,s.NEAREST),s.texParameteri(s.TEXTURE_2D,s.TEXTURE_MAG_FILTER,s.NEAREST),s.texParameteri(s.TEXTURE_2D,s.TEXTURE_WRAP_S,s.CLAMP_TO_EDGE),s.texParameteri(s.TEXTURE_2D,s.TEXTURE_WRAP_T,s.CLAMP_TO_EDGE),s.bindTexture(s.TEXTURE_2D,null),s.getError()!==s.NO_ERROR)throw s.deleteTexture(l),new Error(`Texture allocation failed (${t}x${e} ${i}); GPU memory may be exhausted.`);this.bytesAllocated+=t*e*r.bytes;const u={id:this.nextId++,tex:l,width:t,height:e,format:i,refs:1};return this.live.add(u),u}retain(t){return t.refs++,t}release(t){if(!this.live.has(t)||(t.refs--,t.refs>0))return;this.live.delete(t);const e=this.key(t.width,t.height,t.format);let i=this.free.get(e);i||this.free.set(e,i=[]),i.push(t)}trim(){const t=this.ctx.gl;for(const[,e]of this.free)for(const i of e)t.deleteTexture(i.tex),this.bytesAllocated-=i.width*i.height*he(t,i.format).bytes;this.free.clear()}bindTargets(t){const e=this.ctx.gl;e.bindFramebuffer(e.FRAMEBUFFER,this.fbo);const i=[];for(let a=0;a<6;a++){const n=t[a];e.framebufferTexture2D(e.FRAMEBUFFER,e.COLOR_ATTACHMENT0+a,e.TEXTURE_2D,n?n.tex:null,0),n&&i.push(e.COLOR_ATTACHMENT0+a)}e.drawBuffers(i),e.viewport(0,0,t[0].width,t[0].height)}unbindTargets(){const t=this.ctx.gl;t.bindFramebuffer(t.FRAMEBUFFER,null)}readFloat(t){const e=this.ctx.gl;this.bindTargets([t]);const i=new Float32Array(t.width*t.height*4);return e.readPixels(0,0,t.width,t.height,e.RGBA,e.FLOAT,i),this.unbindTargets(),i}readBytes(t){const e=this.ctx.gl;this.bindTargets([t]);const i=new Uint8Array(t.width*t.height*4);return e.readPixels(0,0,t.width,t.height,e.RGBA,e.UNSIGNED_BYTE,i),this.unbindTargets(),i}upload(t,e){const i=this.ctx.gl,a=he(i,t.format);i.bindTexture(i.TEXTURE_2D,t.tex),i.texSubImage2D(i.TEXTURE_2D,0,0,0,t.width,t.height,a.format,a.type,e),i.bindTexture(i.TEXTURE_2D,null)}}const yt=`#version 300 es
+precision highp float;
+out vec2 vUv;
+void main() {
+  // Fullscreen triangle from gl_VertexID.
+  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+  vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+`;class ge{constructor(t,e,i=yt,a="program"){this.ctx=t,this.name=a;const n=t.gl,s=Ie(n,n.VERTEX_SHADER,i,a+".vert"),r=Ie(n,n.FRAGMENT_SHADER,e,a+".frag"),l=n.createProgram();if(!l)throw new Error("createProgram failed");if(n.attachShader(l,s),n.attachShader(l,r),n.linkProgram(l),n.deleteShader(s),n.deleteShader(r),!n.getProgramParameter(l,n.LINK_STATUS)){const u=n.getProgramInfoLog(l);throw n.deleteProgram(l),new Error(`Program link failed (${a}): ${u}`)}this.program=l;const c=n.getProgramParameter(l,n.ACTIVE_UNIFORMS);for(let u=0;u<c;u++){const m=n.getActiveUniform(l,u);if(!m)continue;const p=m.name.replace(/\[0\]$/,"");this.uniforms.set(p,n.getUniformLocation(l,m.name)),this.types.set(p,m.type)}}program;uniforms=new Map;types=new Map;use(){this.ctx.gl.useProgram(this.program)}set(t){const e=this.ctx.gl;let i=0;for(const[a,n]of Object.entries(t)){const s=this.uniforms.get(a);if(s===void 0)continue;const r=this.types.get(a);if(typeof n=="object"&&n!==null&&"tex"in n)e.activeTexture(e.TEXTURE0+i),e.bindTexture(e.TEXTURE_2D,n.tex),e.uniform1i(s,i),i++;else if(typeof n=="boolean")e.uniform1i(s,n?1:0);else if(typeof n=="number")r===e.INT||r===e.UNSIGNED_INT||r===e.BOOL||r===e.SAMPLER_2D?e.uniform1i(s,n|0):e.uniform1f(s,n);else{const l=n;switch(r){case e.FLOAT_VEC2:e.uniform2fv(s,l);break;case e.FLOAT_VEC3:e.uniform3fv(s,l);break;case e.FLOAT_VEC4:e.uniform4fv(s,l);break;case e.INT_VEC2:e.uniform2iv(s,l);break;case e.FLOAT_MAT4:e.uniformMatrix4fv(s,!1,l);break;case e.FLOAT_MAT3:e.uniformMatrix3fv(s,!1,l);break;case e.FLOAT:e.uniform1fv(s,l);break;case e.INT:e.uniform1iv(s,l);break;default:e.uniform1fv(s,l)}}}}dispose(){this.ctx.gl.deleteProgram(this.program)}}function Ie(o,t,e,i){const a=o.createShader(t);if(!a)throw new Error("createShader failed");if(o.shaderSource(a,e),o.compileShader(a),!o.getShaderParameter(a,o.COMPILE_STATUS)){const n=o.getShaderInfoLog(a);o.deleteShader(a);const s=e.split(`
+`).map((r,l)=>`${String(l+1).padStart(4)}: ${r}`).join(`
+`);throw console.error(`Shader compile failed (${i}):
+${n}
+${s}`),new Error(`Shader compile failed (${i}): ${n}`)}return a}class bt{constructor(t){this.ctx=t}cache=new Map;get(t,e,i){let a=this.cache.get(t);return a||(a=new ge(this.ctx,e(),i,t),this.cache.set(t,a)),a}}const b=`#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+in vec2 vUv;
+uniform ivec2 uRes;      // output resolution
+`,k=`
+ivec2 clampCoord(ivec2 p, ivec2 res) { return clamp(p, ivec2(0), res - 1); }
+
+vec4 fetchC(sampler2D t, ivec2 p) {
+  ivec2 r = textureSize(t, 0);
+  return texelFetch(t, clamp(p, ivec2(0), r - 1), 0);
+}
+
+// Bilinear sample at continuous pixel coordinate (pixel centers at integer + 0.5).
+vec4 sampleBilinearPx(sampler2D t, vec2 px) {
+  ivec2 r = textureSize(t, 0);
+  vec2 p = px - 0.5;
+  vec2 f = fract(p);
+  ivec2 i = ivec2(floor(p));
+  vec4 a = texelFetch(t, clamp(i, ivec2(0), r - 1), 0);
+  vec4 b = texelFetch(t, clamp(i + ivec2(1, 0), ivec2(0), r - 1), 0);
+  vec4 c = texelFetch(t, clamp(i + ivec2(0, 1), ivec2(0), r - 1), 0);
+  vec4 d = texelFetch(t, clamp(i + ivec2(1, 1), ivec2(0), r - 1), 0);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Bilinear sample at normalized uv in [0,1], resolution independent.
+vec4 sampleBilinear(sampler2D t, vec2 uv) {
+  vec2 r = vec2(textureSize(t, 0));
+  return sampleBilinearPx(t, uv * r);
+}
+
+// Bicubic (Catmull-Rom) sample at normalized uv for smooth upsampling.
+vec4 sampleBicubic(sampler2D t, vec2 uv) {
+  ivec2 ri = textureSize(t, 0);
+  vec2 r = vec2(ri);
+  vec2 p = uv * r - 0.5;
+  vec2 f = fract(p);
+  ivec2 i = ivec2(floor(p));
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = -0.5 * f3 + f2 - 0.5 * f;
+  vec2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
+  vec2 w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+  vec2 w3 = 0.5 * f3 - 0.5 * f2;
+  vec4 acc = vec4(0.0);
+  float wx[4]; wx[0] = w0.x; wx[1] = w1.x; wx[2] = w2.x; wx[3] = w3.x;
+  float wy[4]; wy[0] = w0.y; wy[1] = w1.y; wy[2] = w2.y; wy[3] = w3.y;
+  for (int y = 0; y < 4; y++) {
+    vec4 row = vec4(0.0);
+    for (int x = 0; x < 4; x++) {
+      row += wx[x] * texelFetch(t, clamp(i + ivec2(x - 1, y - 1), ivec2(0), ri - 1), 0);
+    }
+    acc += wy[y] * row;
+  }
+  return acc;
+}
+`,H=`
+uint pcg(uint v) {
+  uint state = v * 747796405u + 2891336453u;
+  uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+uint hash2u(ivec2 p, uint seed) {
+  return pcg(uint(p.x) + pcg(uint(p.y) + pcg(seed)));
+}
+float hash2f(ivec2 p, uint seed) { return float(hash2u(p, seed)) * (1.0 / 4294967296.0); }
+vec2 hash2v(ivec2 p, uint seed) {
+  uint h = hash2u(p, seed);
+  return vec2(float(h & 0xffffu), float(h >> 16u)) * (1.0 / 65535.0);
+}
+vec2 gradDir(ivec2 p, uint seed) {
+  float a = hash2f(p, seed) * 6.28318530718;
+  return vec2(cos(a), sin(a));
+}
+
+// Perlin gradient noise, output roughly in [-1, 1].
+float perlin(vec2 x, uint seed) {
+  vec2 i = floor(x);
+  vec2 f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  ivec2 ii = ivec2(i);
+  float a = dot(gradDir(ii, seed), f);
+  float b = dot(gradDir(ii + ivec2(1, 0), seed), f - vec2(1.0, 0.0));
+  float c = dot(gradDir(ii + ivec2(0, 1), seed), f - vec2(0.0, 1.0));
+  float d = dot(gradDir(ii + ivec2(1, 1), seed), f - vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 1.4142;
+}
+
+// Perlin with analytic-ish derivative via finite differences in noise space (cheap).
+vec3 perlinD(vec2 x, uint seed) {
+  float e = 0.01;
+  float n = perlin(x, seed);
+  float nx = perlin(x + vec2(e, 0.0), seed);
+  float ny = perlin(x + vec2(0.0, e), seed);
+  return vec3(n, (nx - n) / e, (ny - n) / e);
+}
+
+float valueNoise(vec2 x, uint seed) {
+  vec2 i = floor(x);
+  vec2 f = x - i;
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  ivec2 ii = ivec2(i);
+  float a = hash2f(ii, seed);
+  float b = hash2f(ii + ivec2(1, 0), seed);
+  float c = hash2f(ii + ivec2(0, 1), seed);
+  float d = hash2f(ii + ivec2(1, 1), seed);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
+}
+
+// Cellular noise: returns (F1, F2, cell id hash, edge distance)
+vec4 cellular(vec2 x, float jitter, uint seed) {
+  vec2 i = floor(x);
+  vec2 f = x - i;
+  float f1 = 8.0, f2 = 8.0;
+  float id = 0.0;
+  vec2 bestPt = vec2(0.0);
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      ivec2 c = ivec2(i) + ivec2(dx, dy);
+      vec2 o = hash2v(c, seed) * jitter + (1.0 - jitter) * 0.5;
+      vec2 pt = vec2(dx, dy) + o - f;
+      float d = dot(pt, pt);
+      if (d < f1) { f2 = f1; f1 = d; id = hash2f(c, seed + 7u); bestPt = pt; }
+      else if (d < f2) { f2 = d; }
+    }
+  }
+  // Edge distance (Voronoi border) second pass
+  float ed = 8.0;
+  for (int dy = -2; dy <= 2; dy++) {
+    for (int dx = -2; dx <= 2; dx++) {
+      ivec2 c = ivec2(i) + ivec2(dx, dy);
+      vec2 o = hash2v(c, seed) * jitter + (1.0 - jitter) * 0.5;
+      vec2 pt = vec2(dx, dy) + o - f;
+      vec2 diff = pt - bestPt;
+      if (dot(diff, diff) > 1e-6) {
+        ed = min(ed, dot(0.5 * (bestPt + pt), normalize(diff)));
+      }
+    }
+  }
+  return vec4(sqrt(f1), sqrt(f2), id, ed);
+}
+
+// Fractal Brownian motion of perlin noise; returns [-1,1]-ish normalized by amplitude sum.
+float fbm(vec2 p, int octaves, float lacunarity, float gain, uint seed) {
+  float sum = 0.0, amp = 1.0, norm = 0.0;
+  for (int o = 0; o < 16; o++) {
+    if (o >= octaves) break;
+    sum += amp * perlin(p, seed + uint(o) * 131u);
+    norm += amp;
+    amp *= gain;
+    p = p * lacunarity + vec2(17.3, 9.1);
+  }
+  return sum / max(norm, 1e-6);
+}
+
+// Domain warp vector from two independent fbm fields.
+vec2 warpVec(vec2 p, int octaves, uint seed) {
+  return vec2(fbm(p, octaves, 2.0, 0.5, seed + 101u), fbm(p + vec2(31.7, 11.3), octaves, 2.0, 0.5, seed + 202u));
+}
+`,We=`
+// Gradient of height field in cell units (height scaled by hs).
+vec2 heightGradient(sampler2D h, ivec2 p, float hs) {
+  float l = fetchC(h, p + ivec2(-1, 0)).r;
+  float r = fetchC(h, p + ivec2(1, 0)).r;
+  float d = fetchC(h, p + ivec2(0, -1)).r;
+  float u = fetchC(h, p + ivec2(0, 1)).r;
+  return vec2(r - l, u - d) * 0.5 * hs;
+}
+vec3 heightNormal(sampler2D h, ivec2 p, float hs) {
+  vec2 g = heightGradient(h, p, hs);
+  return normalize(vec3(-g.x, -g.y, 1.0));
+}
+`;class xt{constructor(t){this.ctx=t,this.gl=t.gl,this.pool=new gt(t),this.programs=new bt(t)}gl;pool;programs;run(t,e,i,a){const n=Array.isArray(a)?a:[a],s=this.programs.get(t,e);s.use(),s.set({...i,uRes:[n[0].width,n[0].height]}),this.pool.bindTargets(n),this.ctx.drawQuad(),this.pool.unbindTargets()}alloc(t,e,i="R32F"){return this.pool.acquire(t,e,i)}release(t){t&&this.pool.release(t)}resample(t,e,i,a=t.format){const n=this.alloc(e,i,a),s=e<t.width||i<t.height;return this.run("resample_"+(s?"box":"cubic"),()=>`${b}${k}
+uniform sampler2D uSrc;
+uniform int uDown;
+out vec4 o;
+void main() {
+  if (uDown == 1) {
+    // Box filter over the source footprint of this output pixel.
+    vec2 sr = vec2(textureSize(uSrc, 0));
+    vec2 scale = sr / vec2(uRes);
+    vec2 p0 = vUv * sr - 0.5 * scale;
+    ivec2 n = max(ivec2(ceil(scale)), ivec2(1));
+    vec4 acc = vec4(0.0);
+    float cnt = 0.0;
+    for (int y = 0; y < 16; y++) { if (y >= n.y) break;
+      for (int x = 0; x < 16; x++) { if (x >= n.x) break;
+        acc += fetchC(uSrc, ivec2(floor(p0 + (vec2(x, y) + 0.5) * scale / vec2(n))));
+        cnt += 1.0;
+      } }
+    o = acc / cnt;
+  } else {
+    o = sampleBicubic(uSrc, vUv);
+  }
+}`,{uSrc:t,uDown:s?1:0},n),n}copy(t,e=t.format){const i=this.alloc(t.width,t.height,e);return this.run("copy",()=>`${b}
+uniform sampler2D uSrc;
+out vec4 o;
+void main() { o = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0); }`,{uSrc:t},i),i}fill(t,e){const i=this.gl;this.pool.bindTargets([t]),i.clearColor(e[0],e[1],e[2],e[3]),i.clear(i.COLOR_BUFFER_BIT),this.pool.unbindTargets()}minMax(t){let e=null,i=t.width,a=t.height,n=t,s=!0;for(;;){const u=Math.max(1,Math.ceil(i/4)),m=Math.max(1,Math.ceil(a/4)),p=this.alloc(u,m,"RGBA32F");if(this.run("reduce_minmax",()=>`${b}
+uniform sampler2D uSrc;
+uniform int uFirst;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy) * 4;
+  ivec2 sr = textureSize(uSrc, 0);
+  float mn = 1e30, mx = -1e30;
+  for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) {
+    ivec2 q = p + ivec2(x, y);
+    if (q.x >= sr.x || q.y >= sr.y) continue;
+    vec4 v = texelFetch(uSrc, q, 0);
+    if (uFirst == 1) { mn = min(mn, v.r); mx = max(mx, v.r); }
+    else { mn = min(mn, v.r); mx = max(mx, v.g); }
+  }
+  o = vec4(mn, mx, 0.0, 1.0);
+}`,{uSrc:n,uFirst:s?1:0},p),e&&this.release(e),e=p,s=!1,n=p,i=u,a=m,i<=4&&a<=4)break}const r=this.pool.readFloat(e);let l=1/0,c=-1/0;for(let u=0;u<e.width*e.height;u++)l=Math.min(l,r[u*4]),c=Math.max(c,r[u*4+1]);return this.release(e),{min:l,max:c}}normalize(t,e,i){const a=e===void 0||i===void 0?this.minMax(t):{min:e,max:i},n=this.alloc(t.width,t.height,"R32F"),s=Math.max(a.max-a.min,1e-9);return this.run("normalize",()=>`${b}
+uniform sampler2D uSrc; uniform float uMin; uniform float uInvRange;
+out vec4 o;
+void main() { float v = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r; o = vec4(clamp((v - uMin) * uInvRange, 0.0, 1.0), 0.0, 0.0, 1.0); }`,{uSrc:t,uMin:a.min,uInvRange:1/s},n),n}sync(){return this.ctx.sync()}}function je(){return new Promise(o=>setTimeout(o,0))}function wt(o){const t=new Map(o.nodes.map(n=>[n.id,n])),e=new Map,i=[],a=(n,s)=>{const r=e.get(n.id);if(r!==2){if(r===1)throw new Error(`Cycle detected through node ${[...s,n.id].join(" -> ")}`);e.set(n.id,1);for(const l of Object.values(n.inputs)){if(!l)continue;const c=t.get(l.node);c&&a(c,[...s,n.id])}e.set(n.id,2),i.push(n)}};for(const n of o.nodes)a(n,[]);return i}function Ye(o,t){const e=new Map(o.nodes.map(n=>[n.id,n])),i=new Set,a=n=>{if(i.has(n))return;const s=e.get(n);if(s){i.add(n);for(const r of Object.values(s.inputs))r&&a(r.node)}};return a(t),i}function _e(o,t,e){return t===e?!0:Ye(o,t).has(e)}let Oe=0;function kt(o="n"){return Oe++,`${o}${Date.now().toString(36)}${Oe.toString(36)}`}function ye(o){if(o===null||typeof o!="object")return JSON.stringify(o);if(Array.isArray(o))return`[${o.map(ye).join(",")}]`;const t=o;return`{${Object.keys(t).sort().map(e=>`${JSON.stringify(e)}:${ye(t[e])}`).join(",")}}`}const Se=(o=4)=>[{key:"seed",label:"Seed",type:"seed",default:1,min:0,max:99999,step:1},{key:"scale",label:"Scale",type:"float",default:o,min:.25,max:64,step:.25,hint:"Number of features across the map width"},{key:"offsetX",label:"Offset X",type:"float",default:0,min:-100,max:100,step:.01},{key:"offsetY",label:"Offset Y",type:"float",default:0,min:-100,max:100,step:.01}];function Ee(o,t,e){return{uSeed:Number(o.seed)|0,uScale:Number(o.scale),uOffset:[Number(o.offsetX??0),Number(o.offsetY??0)],uAspect:t/e}}const Me=`
+uniform int uSeed; uniform float uScale; uniform vec2 uOffset; uniform float uAspect;
+vec2 coord() { return (vec2(vUv.x * uAspect, vUv.y) + uOffset) * uScale; }
+`;function Re(o,t,e){if(!e)return t;const i=o.normalize(t);return o.release(t),i}const St={type:"perlin",title:"Perlin",category:"Primitive",description:"Fractal gradient noise (fBm). Variants: Standard, Billow, Ridged.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"variant",label:"Type",type:"select",default:"standard",options:[{value:"standard",label:"Standard"},{value:"billow",label:"Billow"},{value:"ridged",label:"Ridged"}]},...Se(4),{key:"octaves",label:"Octaves",type:"int",default:8,min:1,max:16,step:1},{key:"lacunarity",label:"Lacunarity",type:"float",default:2,min:1.2,max:4,step:.05},{key:"gain",label:"Persistence",type:"float",default:.5,min:.1,max:.9,step:.01},{key:"warp",label:"Warp",type:"float",default:0,min:0,max:2,step:.01,hint:"Domain warp amount"},{key:"autolevel",label:"Autolevel",type:"bool",default:!0}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F");return o.run("perlin",()=>`${b}${k}${H}${Me}
+uniform int uOctaves; uniform float uLac; uniform float uGain; uniform int uVariant; uniform float uWarp;
+out vec4 o;
+void main() {
+  vec2 p = coord();
+  if (uWarp > 0.0) p += uWarp * warpVec(p * 0.5, 4, uint(uSeed) + 999u);
+  float sum = 0.0, amp = 1.0, norm = 0.0;
+  uint seed = uint(uSeed);
+  for (int i = 0; i < 16; i++) {
+    if (i >= uOctaves) break;
+    float n = perlin(p, seed + uint(i) * 131u);
+    if (uVariant == 1) n = abs(n) * 2.0 - 1.0;
+    else if (uVariant == 2) { n = 1.0 - abs(n); n = n * n * 2.0 - 1.0; }
+    sum += n * amp; norm += amp; amp *= uGain;
+    p = p * uLac + vec2(13.1, 7.7);
+  }
+  o = vec4(sum / norm * 0.5 + 0.5, 0.0, 0.0, 1.0);
+}`,{...Ee(e,i.width,i.height),uOctaves:Number(e.octaves)|0,uLac:Number(e.lacunarity),uGain:Number(e.gain),uVariant:e.variant==="billow"?1:e.variant==="ridged"?2:0,uWarp:Number(e.warp)},a),{height:Re(o,a,!!e.autolevel)}}},Et={type:"mountain",title:"Mountain",category:"Primitive",description:"Ridged multifractal mountains with bulk shaping and domain warp — a good base for erosion.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[...Se(2),{key:"octaves",label:"Octaves",type:"int",default:10,min:1,max:16,step:1},{key:"gain",label:"Persistence",type:"float",default:.5,min:.2,max:.9,step:.01},{key:"sharpness",label:"Ridge sharpness",type:"float",default:1.6,min:.5,max:4,step:.05},{key:"bulk",label:"Bulk",type:"float",default:.6,min:0,max:1,step:.01,hint:"Large scale mass variation"},{key:"warp",label:"Warp",type:"float",default:.35,min:0,max:2,step:.01},{key:"peaks",label:"Peak emphasis",type:"float",default:1.3,min:.5,max:3,step:.05,hint:"Power curve applied to the result"},{key:"autolevel",label:"Autolevel",type:"bool",default:!0}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F");return o.run("mountain",()=>`${b}${k}${H}${Me}
+uniform int uOctaves; uniform float uGain; uniform float uSharp; uniform float uBulk; uniform float uWarp; uniform float uPeaks;
+out vec4 o;
+void main() {
+  vec2 p = coord();
+  uint seed = uint(uSeed);
+  if (uWarp > 0.0) p += uWarp * warpVec(p * 0.6, 3, seed + 777u);
+  float sum = 0.0, amp = 1.0, norm = 0.0, weight = 1.0;
+  vec2 q = p;
+  for (int i = 0; i < 16; i++) {
+    if (i >= uOctaves) break;
+    float n = perlin(q, seed + uint(i) * 131u);
+    n = 1.0 - abs(n);
+    n = pow(max(n, 0.0), uSharp);
+    n *= weight;
+    weight = clamp(n * 2.0, 0.0, 1.0);
+    sum += n * amp; norm += amp; amp *= uGain;
+    q = q * 2.03 + vec2(5.2, 1.3);
+  }
+  float ridged = sum / norm;
+  float bulk = fbm(p * 0.45 + 3.7, 4, 2.0, 0.5, seed + 55u) * 0.5 + 0.5;
+  float h = ridged * mix(1.0, bulk * 1.2, uBulk);
+  o = vec4(pow(max(h, 0.0), uPeaks), 0.0, 0.0, 1.0);
+}`,{...Ee(e,i.width,i.height),uOctaves:Number(e.octaves)|0,uGain:Number(e.gain),uSharp:Number(e.sharpness),uBulk:Number(e.bulk),uWarp:Number(e.warp),uPeaks:Number(e.peaks)},a),{height:Re(o,a,!!e.autolevel)}}},Mt={type:"voronoi",title:"Voronoi",category:"Primitive",description:"Cellular noise: F1 / F2 distances, cell ids, or crisp edges. Multiple octaves add detail.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"func",label:"Function",type:"select",default:"f1",options:[{value:"f1",label:"F1 (cells)"},{value:"f2",label:"F2"},{value:"f2f1",label:"F2 - F1 (ridges)"},{value:"id",label:"Cell ID (flat)"},{value:"edge",label:"Edge distance"}]},...Se(6),{key:"jitter",label:"Jitter",type:"float",default:1,min:0,max:1,step:.01},{key:"octaves",label:"Octaves",type:"int",default:1,min:1,max:6,step:1},{key:"gain",label:"Persistence",type:"float",default:.5,min:.1,max:.9,step:.01},{key:"invert",label:"Invert",type:"bool",default:!0},{key:"autolevel",label:"Autolevel",type:"bool",default:!0}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F"),n={f1:0,f2:1,f2f1:2,id:3,edge:4};return o.run("voronoi",()=>`${b}${k}${H}${Me}
+uniform int uFunc; uniform float uJitter; uniform int uOctaves; uniform float uGain; uniform int uInvert;
+out vec4 o;
+void main() {
+  vec2 p = coord();
+  uint seed = uint(uSeed);
+  float sum = 0.0, amp = 1.0, norm = 0.0;
+  for (int i = 0; i < 6; i++) {
+    if (i >= uOctaves) break;
+    vec4 c = cellular(p, uJitter, seed + uint(i) * 97u);
+    float v;
+    if (uFunc == 0) v = c.x; else if (uFunc == 1) v = c.y; else if (uFunc == 2) v = c.y - c.x;
+    else if (uFunc == 3) v = c.z; else v = c.w;
+    sum += v * amp; norm += amp; amp *= uGain; p = p * 2.0 + 11.0;
+  }
+  float v = sum / norm;
+  if (uInvert == 1) v = 1.0 - v;
+  o = vec4(v, 0.0, 0.0, 1.0);
+}`,{...Ee(e,i.width,i.height),uFunc:n[String(e.func)]??0,uJitter:Number(e.jitter),uOctaves:Number(e.octaves)|0,uGain:Number(e.gain),uInvert:e.invert?1:0},a),{height:Re(o,a,!!e.autolevel)}}},Rt={type:"gradient",title:"Gradient",category:"Primitive",description:"Linear or radial ramp. Useful as a mask or for sloping terrain.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"kind",label:"Type",type:"select",default:"linear",options:[{value:"linear",label:"Linear"},{value:"radial",label:"Radial"}]},{key:"angle",label:"Angle",type:"float",default:0,min:0,max:360,step:1},{key:"radius",label:"Radius",type:"float",default:.5,min:.05,max:2,step:.01},{key:"centerX",label:"Center X",type:"float",default:.5,min:-1,max:2,step:.01},{key:"centerY",label:"Center Y",type:"float",default:.5,min:-1,max:2,step:.01},{key:"power",label:"Curve",type:"float",default:1,min:.1,max:5,step:.05}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F");return o.run("gradient",()=>`${b}
+uniform int uKind; uniform float uAngle; uniform float uRadius; uniform vec2 uCenter; uniform float uPower; uniform float uAspect;
+out vec4 o;
+void main() {
+  float v;
+  if (uKind == 0) {
+    vec2 d = vec2(cos(uAngle), sin(uAngle));
+    vec2 c = vUv - 0.5;
+    float ext = abs(d.x) * 0.5 + abs(d.y) * 0.5;
+    v = dot(c, d) / (2.0 * ext) + 0.5;
+  } else {
+    vec2 c = (vUv - uCenter) * vec2(uAspect, 1.0);
+    v = 1.0 - clamp(length(c) / (uRadius * max(uAspect, 1.0) * 0.5 + 1e-6), 0.0, 1.0);
+  }
+  o = vec4(pow(clamp(v, 0.0, 1.0), uPower), 0.0, 0.0, 1.0);
+}`,{uKind:e.kind==="radial"?1:0,uAngle:Number(e.angle)*Math.PI/180,uRadius:Number(e.radius),uCenter:[Number(e.centerX),Number(e.centerY)],uPower:Number(e.power),uAspect:i.width/i.height},a),{height:a}}},Ft={type:"shape",title:"Shape",category:"Primitive",description:"Island / plateau mask with soft, noise-distorted edges.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"kind",label:"Type",type:"select",default:"circle",options:[{value:"circle",label:"Circle"},{value:"square",label:"Rounded square"}]},{key:"size",label:"Size",type:"float",default:.65,min:.05,max:1.5,step:.01},{key:"falloff",label:"Falloff",type:"float",default:.3,min:.01,max:1,step:.01},{key:"distort",label:"Edge distortion",type:"float",default:.15,min:0,max:.6,step:.01},{key:"seed",label:"Seed",type:"seed",default:3,min:0,max:99999,step:1}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F");return o.run("shape",()=>`${b}${k}${H}
+uniform int uKind; uniform float uSize; uniform float uFalloff; uniform float uDistort; uniform int uSeed; uniform float uAspect;
+out vec4 o;
+void main() {
+  vec2 c = (vUv - 0.5) * vec2(uAspect, 1.0);
+  float d = uKind == 0 ? length(c) : max(abs(c.x), abs(c.y)) * 0.85 + length(c) * 0.15;
+  d += uDistort * fbm(vUv * vec2(uAspect, 1.0) * 3.0, 4, 2.0, 0.5, uint(uSeed));
+  float r = uSize * 0.5;
+  float v = 1.0 - smoothstep(r - uFalloff * 0.5, r + uFalloff * 0.5, d);
+  o = vec4(v, 0.0, 0.0, 1.0);
+}`,{uKind:e.kind==="square"?1:0,uSize:Number(e.size),uFalloff:Number(e.falloff),uDistort:Number(e.distort),uSeed:Number(e.seed)|0,uAspect:i.width/i.height},a),{height:a}}},At={type:"constant",title:"Constant",category:"Primitive",description:"Flat value.",inputs:[],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"value",label:"Value",type:"float",default:.5,min:0,max:1,step:.01}],evaluate(o,t,e,i){const a=o.alloc(i.width,i.height,"R32F");return o.fill(a,[Number(e.value),0,0,1]),{height:a}}},Ct=[Et,St,Mt,Rt,Ft,At],Lt=`${b}${k}
+uniform sampler2D uBase;     // base height [0,1] at this level
+uniform sampler2D uDelta;    // previous-level height delta [0,1] units (or empty)
+uniform sampler2D uPrev;     // previous-level state (for water / sediment carry-over)
+uniform sampler2D uMask;     // erodibility mask
+uniform int uHasDelta; uniform int uHasPrev; uniform int uHasMask;
+uniform float uHs;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float b = texelFetch(uBase, p, 0).r;
+  if (uHasDelta == 1) b += sampleBicubic(uDelta, vUv).r;
+  vec2 ds = vec2(0.0);
+  if (uHasPrev == 1) ds = max(sampleBilinear(uPrev, vUv).gb, vec2(0.0));
+  float m = uHasMask == 1 ? clamp(sampleBilinear(uMask, vUv).r, 0.0, 1.0) : 1.0;
+  o = vec4(b * uHs, ds.x, ds.y, m);
+}`,Tt=`${b}${k}
+uniform sampler2D uState; uniform sampler2D uFlux;
+uniform float uPipe;      // dt * A * g / l
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 st = texelFetch(uState, p, 0);
+  float H = st.r + st.g;
+  vec4 f = texelFetch(uFlux, p, 0);
+  ivec2 offs[4]; offs[0] = ivec2(-1, 0); offs[1] = ivec2(1, 0); offs[2] = ivec2(0, -1); offs[3] = ivec2(0, 1);
+  vec4 nf;
+  for (int i = 0; i < 4; i++) {
+    ivec2 q = p + offs[i];
+    float Hn;
+    if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) {
+      Hn = st.r;  // open boundary: neighbour has same terrain height and no water -> drains
+    } else {
+      vec4 n = texelFetch(uState, q, 0);
+      Hn = n.r + n.g;
+    }
+    nf[i] = max(0.0, f[i] + uPipe * (H - Hn));
+  }
+  float sum = nf.x + nf.y + nf.z + nf.w;
+  float K = sum > 1e-6 ? min(1.0, st.g / sum) : 0.0;
+  o = nf * K;
+}`,Nt=`${b}${k}
+uniform sampler2D uState; uniform sampler2D uFlux; uniform sampler2D uMaps;
+uniform float uKc;        // sediment capacity
+uniform float uKs;        // erosion (rock softness)
+uniform float uKd;        // deposition rate
+uniform float uDepthMax;  // capacity fades out in water deeper than this
+uniform float uMinSlope;
+uniform float uThermal;   // talus slippage rate (0 disables)
+uniform float uTalus;     // tan(talus angle)
+uniform float uVmax;
+layout(location = 0) out vec4 oState;
+layout(location = 1) out vec4 oVel;
+layout(location = 2) out vec4 oMaps;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 st = texelFetch(uState, p, 0);
+  vec4 f = texelFetch(uFlux, p, 0);
+  bool lOk = p.x > 0, rOk = p.x < uRes.x - 1, bOk = p.y > 0, tOk = p.y < uRes.y - 1;
+  float inL = lOk ? texelFetch(uFlux, p + ivec2(-1, 0), 0).y : 0.0;  // left neighbour's rightward flux
+  float inR = rOk ? texelFetch(uFlux, p + ivec2(1, 0), 0).x : 0.0;
+  float inB = bOk ? texelFetch(uFlux, p + ivec2(0, -1), 0).w : 0.0;
+  float inT = tOk ? texelFetch(uFlux, p + ivec2(0, 1), 0).z : 0.0;
+  float outSum = f.x + f.y + f.z + f.w;
+  float d0 = st.g;
+  float d1 = max(0.0, d0 + (inL + inR + inB + inT) - outSum);
+  float dMean = max(0.5 * (d0 + d1), 1e-4);
+  vec2 v = vec2((inL - f.x + f.y - inR) * 0.5, (inB - f.z + f.w - inT) * 0.5) / dMean;
+  float vl = length(v);
+  if (vl > uVmax) v *= uVmax / vl;
+  vl = min(vl, uVmax);
+
+  // terrain slope (cell units)
+  float B = st.r;
+  float bl = fetchC(uState, p + ivec2(-1, 0)).r, br = fetchC(uState, p + ivec2(1, 0)).r;
+  float bb = fetchC(uState, p + ivec2(0, -1)).r, bt = fetchC(uState, p + ivec2(0, 1)).r;
+  vec2 g = vec2(br - bl, bt - bb) * 0.5;
+  float sinA = length(g) / sqrt(1.0 + dot(g, g));
+  // Capacity follows discharge per unit width (velocity x depth): thin sheet flow carries little,
+  // converging channels carry a lot, which is the positive feedback that carves drainage networks.
+  // Capacity fades out in deep water (lakes) following Jako & Toth.
+  float lmax = 1.0 - smoothstep(0.0, uDepthMax, d1);
+  float q = vl * min(d1, 1.0);
+  float C = uKc * max(sinA, uMinSlope) * q * lmax;
+
+  float s = st.b;
+  vec4 maps = texelFetch(uMaps, p, 0);
+  float erod = st.a;
+  if (C > s) {
+    float dl = uKs * erod * (C - s);
+    B -= dl; s += dl; maps.r += dl;
+  } else {
+    float dl = uKd * (s - C);
+    B += dl; s -= dl; maps.g += dl;
+  }
+  maps.b += vl * d1;
+
+  // thermal weathering (symmetric, mass conserving; uses pre-pass heights)
+  if (uThermal > 0.0) {
+    float b0 = st.r;
+    float net = 0.0;
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+      if (dx == 0 && dy == 0) continue;
+      ivec2 q = p + ivec2(dx, dy);
+      if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) continue;
+      float bn = texelFetch(uState, q, 0).r;
+      float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
+      float lim = uTalus * dist;
+      float diff = b0 - bn;
+      if (diff > lim) net -= (diff - lim) * 0.125 * uThermal * erod;
+      else if (-diff > lim) net += (-diff - lim) * 0.125 * uThermal * texelFetch(uState, q, 0).a;
+    }
+    B += net;
+  }
+
+  oState = vec4(B, d1, s, st.a);
+  oVel = vec4(v, 0.0, 1.0);
+  oMaps = maps;
+}`,Dt=`${b}${k}${H}
+uniform sampler2D uState; uniform sampler2D uVel;
+uniform float uEvap; uniform float uRain; uniform int uIter;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 st = texelFetch(uState, p, 0);
+  vec2 v = texelFetch(uVel, p, 0).xy;
+  vec2 src = vec2(p) + 0.5 - v;
+  float s = sampleBilinearPx(uState, src).b;
+  // Spatially jittered rain breaks the grid symmetry so channels compete instead of forming flutes.
+  float jitter = 0.5 + hash2f(p, uint(uIter) * 7919u);
+  float d = st.g * (1.0 - uEvap) + uRain * jitter;
+  o = vec4(st.r, d, max(s, 0.0), st.a);
+}`,Bt=`${b}
+uniform sampler2D uState; uniform sampler2D uBase; uniform float uInvHs;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  o = vec4(texelFetch(uState, p, 0).r * uInvHs - texelFetch(uBase, p, 0).r, 0.0, 0.0, 1.0);
+}`,Pt=`${b}${k}
+uniform sampler2D uBase; uniform sampler2D uDelta; uniform int uSameRes;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float d = uSameRes == 1 ? texelFetch(uDelta, p, 0).r : sampleBicubic(uDelta, vUv).r;
+  o = vec4(texelFetch(uBase, p, 0).r + d, 0.0, 0.0, 1.0);
+}`,He=`${b}${k}
+uniform sampler2D uSrc; uniform int uChannel; uniform float uScale; uniform float uPower; uniform int uRaw;
+out vec4 o;
+void main() {
+  vec4 v = uRaw == 1 ? texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0) : sampleBilinear(uSrc, vUv);
+  float c = uChannel == 0 ? v.r : uChannel == 1 ? v.g : uChannel == 2 ? v.b : v.a;
+  if (uRaw == 1) { o = vec4(max(c, 0.0), 0.0, 0.0, 1.0); return; }
+  o = vec4(pow(clamp(c * uScale, 0.0, 1.0), uPower), 0.0, 0.0, 1.0);
+}`,$t=`${b}${k}
+uniform sampler2D uH; uniform sampler2D uMask; uniform int uHasMask;
+uniform float uHs; uniform float uRate; uniform float uTalus;
+out vec4 o;
+float m(ivec2 q) { return uHasMask == 1 ? fetchC(uMask, q).r : 1.0; }
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float b0 = texelFetch(uH, p, 0).r * uHs;
+  float m0 = m(p);
+  float net = 0.0;
+  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+    if (dx == 0 && dy == 0) continue;
+    ivec2 q = p + ivec2(dx, dy);
+    if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) continue;
+    float bn = texelFetch(uH, q, 0).r * uHs;
+    float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
+    float lim = uTalus * dist;
+    float diff = b0 - bn;
+    if (diff > lim) net -= (diff - lim) * 0.125 * uRate * m0;
+    else if (-diff > lim) net += (-diff - lim) * 0.125 * uRate * m(q);
+  }
+  o = vec4((b0 + net) / uHs, 0.0, 0.0, 1.0);
+}`,It={low:1024,medium:2048,high:4096,ultra:8192};function _t(o,t,e){const i=[];let a=o,n=t;for(;;){const s=Math.max(10,Math.round(e*Math.sqrt(a/o)));if(i.unshift({w:Math.round(a),h:Math.round(n),iters:s}),a<=400||i.length>=4)break;a/=2,n/=2}return i}const Ot={type:"erosion",title:"Erosion",category:"Erosion",description:"Hydraulic erosion with sediment transport (virtual pipes), progressive multi-resolution. Outputs Flow, Wear and Deposit data maps.",heavy:!0,inputs:[{key:"height",label:"In",kind:"height"},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"height",label:"Out",kind:"height"},{key:"flow",label:"Flow",kind:"height"},{key:"wear",label:"Wear",kind:"height"},{key:"deposit",label:"Deposit",kind:"height"}],params:[{key:"iterations",label:"Duration",type:"int",default:500,min:10,max:4e3,step:10,hint:"Iterations at the finest level; the build time budget may shorten this"},{key:"quality",label:"Detail",type:"select",default:"medium",options:[{value:"low",label:"Low (1K)"},{value:"medium",label:"Medium (2K)"},{value:"high",label:"High (4K)"},{value:"ultra",label:"Ultra (full)"}],hint:"Maximum simulation resolution; details are restored from the input above it"},{key:"rain",label:"Rain",type:"float",default:.5,min:0,max:3,step:.01},{key:"softness",label:"Rock softness",type:"float",default:.5,min:0,max:1,step:.01},{key:"capacity",label:"Sediment capacity",type:"float",default:1,min:.05,max:4,step:.05},{key:"deposition",label:"Deposition",type:"float",default:.5,min:0,max:1,step:.01},{key:"evaporation",label:"Evaporation",type:"float",default:.5,min:0,max:1,step:.01},{key:"downcutting",label:"Downcutting",type:"float",default:.5,min:.05,max:1,step:.01,hint:"Depth limit of channel erosion (lower = deeper channels)"},{key:"thermal",label:"Talus slippage",type:"float",default:0,min:0,max:1,step:.01,hint:"Gentle scree creep during erosion; strong values soften fine ridges"},{key:"talusAngle",label:"Talus angle",type:"float",default:45,min:5,max:80,step:1},{key:"flowPower",label:"Flow contrast",type:"float",default:.5,min:.1,max:1,step:.05}],async evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("Erosion: no input height");const n=i.width,s=i.height,r=Math.min(It[String(e.quality)]??2048,i.preview?1024:1e9),l=Math.min(n,r),c=Math.round(s*l/n),u=_t(l,c,Math.max(1,Number(e.iterations)|0)),m=A=>i.heightRatio*A,p=Number(e.rain)*.004,v={uPipe:.9,uKc:Number(e.capacity)*1,uKs:Number(e.softness)*.15,uKd:.05+Number(e.deposition)*.5,uDepthMax:Number(e.downcutting)*4,uMinSlope:.02,uThermal:Number(e.thermal)*.1,uTalus:Math.tan(Number(e.talusAngle)*Math.PI/180),uVmax:3,uEvap:.005+Number(e.evaporation)*.04,uRain:p};let g=null,y=null,d=null;const x=u.reduce((A,f)=>A+f.w*f.h*f.iters,0);let w=0,S=0,M=!1,C=0;for(let A=0;A<u.length;A++){const f=u[A],_=m(f.w),T=f.w===n&&f.h===s?o.pool.retain(a):o.resample(a,f.w,f.h,"R32F"),ie=t.mask?t.mask:null;let N=o.alloc(f.w,f.h,"RGBA32F"),ce=o.alloc(f.w,f.h,"RGBA32F"),j=o.alloc(f.w,f.h,"RGBA32F"),Y=o.alloc(f.w,f.h,"RGBA32F");const oe=o.alloc(f.w,f.h,"RGBA32F");let U=o.alloc(f.w,f.h,"RGBA32F"),ae=o.alloc(f.w,f.h,"RGBA32F");if(o.fill(j,[0,0,0,0]),o.fill(oe,[0,0,0,0]),o.run("erosion_pack",()=>Lt,{uBase:T,uDelta:g??T,uPrev:y??T,uMask:ie??T,uHasDelta:g?1:0,uHasPrev:y?1:0,uHasMask:ie?1:0,uHs:_},N),d){const B=o.resample(d,f.w,f.h,"RGBA32F");o.release(U),U=B,o.release(d),d=null}else o.fill(U,[0,0,0,0]);y&&(o.release(y),y=null),g&&(o.release(g),g=null);const lt=u.slice(A).reduce((B,J)=>B+J.w*J.h*J.iters,0);let K=f.iters;const ut=f.w>=2048?2:f.w>=1024?4:10;let D=0;for(;D<K;){if(i.cancelled())throw new Error("cancelled");const B=Math.min(ut,K-D),J=performance.now();for(let de=0;de<B;de++)o.run("erosion_flux",()=>Tt,{uState:N,uFlux:j,uPipe:v.uPipe},Y),o.run("erosion_water",()=>Nt,{uState:N,uFlux:Y,uMaps:U,uKc:v.uKc,uKs:v.uKs,uKd:v.uKd,uDepthMax:v.uDepthMax,uMinSlope:v.uMinSlope,uThermal:v.uThermal,uTalus:v.uTalus,uVmax:v.uVmax},[ce,oe,ae]),o.run("erosion_advect",()=>Dt,{uState:ce,uVel:oe,uEvap:v.uEvap,uRain:v.uRain,uIter:D+de},N),[j,Y]=[Y,j],[U,ae]=[ae,U];await o.sync();const ct=performance.now()-J;D+=B,C+=B,w+=B*f.w*f.h;const Pe=ct/(B*f.w*f.h);S=S===0?Pe:S*.7+Pe*.3;const dt=performance.now(),ht=(i.deadline-dt)*i.timeShare,pt=f.w*f.h*(f.iters-D),mt=Math.max(lt-f.w*f.h*D,1),ft=ht*(pt/mt),$e=D+Math.floor(Math.max(ft,0)/(S*f.w*f.h));$e<K&&(K=Math.max(D,$e),M=!0),i.progress(w/x,`Erosion ${f.w}×${f.h}: ${D}/${K} iterations`),await je()}g=o.alloc(f.w,f.h,"R32F"),o.run("erosion_unpack",()=>Bt,{uState:N,uBase:T,uInvHs:1/_},g),y=N,d=U,o.release(ce),o.release(j),o.release(Y),o.release(oe),o.release(ae),o.release(T)}const X=o.alloc(n,s,"R32F");o.run("erosion_apply",()=>Pt,{uBase:a,uDelta:g,uSameRes:g.width===n?1:0},X),o.release(g),o.release(y);const W=(A,f)=>{const _=o.alloc(d.width,d.height,"R32F");o.run("erosion_extract",()=>He,{uSrc:d,uChannel:A,uScale:1,uPower:1,uRaw:1},_);const T=o.resample(_,Math.max(1,Math.round(_.width/6)),Math.max(1,Math.round(_.height/6)),"R32F"),ie=o.minMax(T);o.release(T),o.release(_);const N=o.alloc(n,s,"R32F");return o.run("erosion_extract",()=>He,{uSrc:d,uChannel:A,uScale:1/Math.max(ie.max,1e-9),uPower:f,uRaw:0},N),N},F=Number(e.flowPower),L=W(2,F),te=W(0,.6),rt=W(1,.6);return o.release(d),M&&i.progress(1,`Erosion stopped early by time budget (${C} iterations total)`),{height:X,flow:L,wear:te,deposit:rt}}},Ht={type:"thermal",title:"Thermal",category:"Erosion",description:"Talus slippage: material above the angle of repose slides downhill, producing scree slopes.",heavy:!0,inputs:[{key:"height",label:"In",kind:"height"},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"iterations",label:"Duration",type:"int",default:60,min:1,max:500,step:1},{key:"angle",label:"Talus angle",type:"float",default:35,min:5,max:80,step:1},{key:"rate",label:"Rate",type:"float",default:.4,min:.01,max:.5,step:.01}],async evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("Thermal: no input");return{height:await Ut(o,a,t.mask,Number(e.iterations)|0,Number(e.angle),Number(e.rate),i)}}};async function Ut(o,t,e,i,a,n,s){const r=t.width,l=t.height,c=s.heightRatio*r;let u=o.copy(t,"R32F"),m=o.alloc(r,l,"R32F");const p=Math.tan(a*Math.PI/180),v=r>=2048?4:12;for(let g=0;g<i;g+=v){if(s.cancelled())throw new Error("cancelled");const y=Math.min(v,i-g);for(let d=0;d<y;d++)o.run("thermal",()=>$t,{uH:u,uMask:e??u,uHasMask:e?1:0,uHs:c,uRate:n,uTalus:p},m),[u,m]=[m,u];if(await o.sync(),s.progress((g+y)/i,`Thermal: ${g+y}/${i}`),performance.now()>s.deadline)break;await je()}return o.release(m),u}const Gt=[Ot,Ht],V={inputs:[{key:"height",label:"In",kind:"height"}],outputs:[{key:"height",label:"Out",kind:"height"}]};function I(o,t){if(!o)throw new Error(`${t}: input not connected`);return o}const Vt={type:"combine",title:"Combine",category:"Modifier",description:"Blend two heightfields with a mode and ratio; an optional mask limits where B applies.",inputs:[{key:"a",label:"A",kind:"height"},{key:"b",label:"B",kind:"height"},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"mode",label:"Mode",type:"select",default:"add",options:[{value:"add",label:"Add"},{value:"subtract",label:"Subtract"},{value:"multiply",label:"Multiply"},{value:"max",label:"Max"},{value:"min",label:"Min"},{value:"blend",label:"Blend (mix)"},{value:"screen",label:"Screen"},{value:"overlay",label:"Overlay"},{value:"difference",label:"Difference"}]},{key:"ratio",label:"Ratio",type:"float",default:.5,min:0,max:1,step:.01},{key:"clamp",label:"Clamp 0..1",type:"bool",default:!0}],evaluate(o,t,e,i){const a=I(t.a,"Combine A"),n=t.b??a,s={add:0,subtract:1,multiply:2,max:3,min:4,blend:5,screen:6,overlay:7,difference:8},r=o.alloc(i.width,i.height,"R32F");return o.run("combine",()=>`${b}${k}
+uniform sampler2D uA; uniform sampler2D uB; uniform sampler2D uMask; uniform int uHasMask; uniform int uMode; uniform float uRatio; uniform int uClamp;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float a = texelFetch(uA, p, 0).r;
+  float b = sampleBilinear(uB, vUv).r;
+  float m = uHasMask == 1 ? sampleBilinear(uMask, vUv).r : 1.0;
+  float r;
+  if (uMode == 0) r = a + b * uRatio * 2.0;
+  else if (uMode == 1) r = a - b * uRatio * 2.0;
+  else if (uMode == 2) r = mix(a, a * b, uRatio);
+  else if (uMode == 3) r = mix(a, max(a, b), uRatio);
+  else if (uMode == 4) r = mix(a, min(a, b), uRatio);
+  else if (uMode == 5) r = mix(a, b, uRatio);
+  else if (uMode == 6) r = mix(a, 1.0 - (1.0 - a) * (1.0 - b), uRatio);
+  else if (uMode == 7) r = mix(a, a < 0.5 ? 2.0 * a * b : 1.0 - 2.0 * (1.0 - a) * (1.0 - b), uRatio);
+  else r = mix(a, abs(a - b), uRatio);
+  r = mix(a, r, m);
+  if (uClamp == 1) r = clamp(r, 0.0, 1.0);
+  o = vec4(r, 0.0, 0.0, 1.0);
+}`,{uA:a,uB:n,uMask:t.mask??a,uHasMask:t.mask?1:0,uMode:s[String(e.mode)]??0,uRatio:Number(e.ratio),uClamp:e.clamp?1:0},r),{height:r}}},zt={type:"warp",title:"Warp",category:"Modifier",description:"Domain-warps the input with fractal noise, breaking up regular shapes.",inputs:[{key:"height",label:"In",kind:"height"},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"strength",label:"Strength",type:"float",default:.05,min:0,max:.5,step:.001,hint:"Displacement as a fraction of map width"},{key:"scale",label:"Scale",type:"float",default:3,min:.25,max:64,step:.25},{key:"octaves",label:"Octaves",type:"int",default:4,min:1,max:10,step:1},{key:"seed",label:"Seed",type:"seed",default:7,min:0,max:99999,step:1}],evaluate(o,t,e,i){const a=I(t.height,"Warp"),n=o.alloc(i.width,i.height,"R32F");return o.run("warp",()=>`${b}${k}${H}
+uniform sampler2D uSrc; uniform sampler2D uMask; uniform int uHasMask; uniform float uStrength; uniform float uScale; uniform int uOctaves; uniform int uSeed; uniform float uAspect;
+out vec4 o;
+void main() {
+  vec2 q = vec2(vUv.x * uAspect, vUv.y) * uScale;
+  vec2 w = warpVec(q, uOctaves, uint(uSeed)) * uStrength;
+  float m = uHasMask == 1 ? texelFetch(uMask, ivec2(gl_FragCoord.xy), 0).r : 1.0;
+  vec2 uv = vUv + w * m * vec2(1.0, uAspect);
+  o = vec4(sampleBilinear(uSrc, clamp(uv, 0.0, 1.0)).r, 0.0, 0.0, 1.0);
+}`,{uSrc:a,uMask:t.mask??a,uHasMask:t.mask?1:0,uStrength:Number(e.strength),uScale:Number(e.scale),uOctaves:Number(e.octaves)|0,uSeed:Number(e.seed)|0,uAspect:i.width/i.height},n),{height:n}}},qt={type:"terrace",title:"Terrace",category:"Modifier",description:"Stratified steps with adjustable sharpness and non-uniform spacing.",inputs:[{key:"height",label:"In",kind:"height"},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"height",label:"Out",kind:"height"}],params:[{key:"steps",label:"Steps",type:"int",default:12,min:2,max:64,step:1},{key:"sharpness",label:"Sharpness",type:"float",default:.7,min:0,max:1,step:.01},{key:"uniformity",label:"Uniformity",type:"float",default:.7,min:0,max:1,step:.01,hint:"Lower values vary the step heights"},{key:"intensity",label:"Intensity",type:"float",default:1,min:0,max:1,step:.01},{key:"seed",label:"Seed",type:"seed",default:11,min:0,max:99999,step:1}],evaluate(o,t,e,i){const a=I(t.height,"Terrace"),n=o.alloc(i.width,i.height,"R32F");return o.run("terrace",()=>`${b}${k}${H}
+uniform sampler2D uSrc; uniform sampler2D uMask; uniform int uHasMask; uniform int uSteps; uniform float uSharp; uniform float uUniform; uniform float uIntensity; uniform int uSeed;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float h = texelFetch(uSrc, p, 0).r;
+  float m = uHasMask == 1 ? texelFetch(uMask, p, 0).r : 1.0;
+  float n = float(uSteps);
+  float t = h * n;
+  float k = floor(t);
+  // non-uniform step heights: jitter each step boundary by hashed noise
+  float jit = (hash2f(ivec2(int(k), 0), uint(uSeed)) - 0.5) * (1.0 - uUniform);
+  float f = fract(t);
+  f = clamp(f + jit * 0.5, 0.0, 1.0);
+  float s = mix(1.0, 24.0, uSharp);
+  float g = pow(f, s);        // sharp lower part
+  float g2 = 1.0 - pow(1.0 - f, s);
+  float shaped = mix(f, mix(g, g2, step(0.5, f)), uSharp);
+  float r = (k + shaped) / n;
+  o = vec4(mix(h, r, uIntensity * m), 0.0, 0.0, 1.0);
+}`,{uSrc:a,uMask:t.mask??a,uHasMask:t.mask?1:0,uSteps:Number(e.steps)|0,uSharp:Number(e.sharpness),uUniform:Number(e.uniformity),uIntensity:Number(e.intensity),uSeed:Number(e.seed)|0},n),{height:n}}};function Fe(o,t,e){let i=e*t.width;if(i<.3)return o.copy(t,"R32F");let a=o.pool.retain(t);for(;i>6&&a.width>64;){const c=o.resample(a,Math.ceil(a.width/2),Math.ceil(a.height/2),"R32F");o.release(a),a=c,i/=2}const n=Math.min(Math.ceil(i*3),24),s=(c,u)=>{const m=o.alloc(c.width,c.height,"R32F");return o.run("gauss",()=>`${b}${k}
+uniform sampler2D uSrc; uniform vec2 uDir; uniform float uSigma; uniform int uRadius;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float sum = 0.0, wsum = 0.0;
+  for (int i = -24; i <= 24; i++) {
+    if (abs(i) > uRadius) continue;
+    float w = exp(-0.5 * float(i * i) / (uSigma * uSigma));
+    sum += w * fetchC(uSrc, p + ivec2(uDir) * i).r;
+    wsum += w;
+  }
+  o = vec4(sum / wsum, 0.0, 0.0, 1.0);
+}`,{uSrc:c,uDir:u,uSigma:i,uRadius:n},m),m},r=s(a,[1,0]),l=s(r,[0,1]);if(o.release(r),o.release(a),l.width!==t.width||l.height!==t.height){const c=o.resample(l,t.width,t.height,"R32F");return o.release(l),c}return l}const Xt={type:"blur",title:"Blur",category:"Modifier",description:"Gaussian blur, resolution independent (radius relative to map width).",...V,params:[{key:"radius",label:"Radius",type:"float",default:.005,min:0,max:.1,step:5e-4}],evaluate(o,t,e){return{height:Fe(o,I(t.height,"Blur"),Number(e.radius))}}},Wt={type:"levels",title:"Levels",category:"Modifier",description:"Remap input range to output range with a gamma curve (like Photoshop levels).",...V,params:[{key:"inLow",label:"In low",type:"float",default:0,min:0,max:1,step:.005},{key:"inHigh",label:"In high",type:"float",default:1,min:0,max:1,step:.005},{key:"gamma",label:"Gamma",type:"float",default:1,min:.1,max:5,step:.01},{key:"outLow",label:"Out low",type:"float",default:0,min:0,max:1,step:.005},{key:"outHigh",label:"Out high",type:"float",default:1,min:0,max:1,step:.005}],evaluate(o,t,e,i){const a=I(t.height,"Levels"),n=o.alloc(i.width,i.height,"R32F");return o.run("levels",()=>`${b}
+uniform sampler2D uSrc; uniform vec4 uIn; uniform float uGamma; uniform vec2 uOut;
+out vec4 o;
+void main() {
+  float h = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r;
+  float t = clamp((h - uIn.x) / max(uIn.y - uIn.x, 1e-6), 0.0, 1.0);
+  t = pow(t, 1.0 / uGamma);
+  o = vec4(mix(uOut.x, uOut.y, t), 0.0, 0.0, 1.0);
+}`,{uSrc:a,uIn:[Number(e.inLow),Number(e.inHigh),0,0],uGamma:Number(e.gamma),uOut:[Number(e.outLow),Number(e.outHigh)]},n),{height:n}}},jt={type:"autolevel",title:"Autolevel",category:"Modifier",description:"Stretches the input so its minimum is 0 and maximum is 1.",...V,params:[],evaluate(o,t){return{height:o.normalize(I(t.height,"Autolevel"))}}},Yt={type:"clamp",title:"Clamp",category:"Modifier",description:"Clamp values to a range (flattens peaks / fills basins).",...V,params:[{key:"min",label:"Min",type:"float",default:0,min:0,max:1,step:.005},{key:"max",label:"Max",type:"float",default:1,min:0,max:1,step:.005}],evaluate(o,t,e,i){const a=I(t.height,"Clamp"),n=o.alloc(i.width,i.height,"R32F");return o.run("clampn",()=>`${b}
+uniform sampler2D uSrc; uniform vec2 uRange; out vec4 o;
+void main() { o = vec4(clamp(texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r, uRange.x, uRange.y), 0.0, 0.0, 1.0); }`,{uSrc:a,uRange:[Number(e.min),Number(e.max)]},n),{height:n}}},Kt={type:"adjust",title:"Adjust",category:"Modifier",description:"Multiply and offset heights; optionally invert.",...V,params:[{key:"multiply",label:"Multiply",type:"float",default:1,min:-4,max:4,step:.01},{key:"add",label:"Add",type:"float",default:0,min:-1,max:1,step:.005},{key:"invert",label:"Invert",type:"bool",default:!1},{key:"clamp",label:"Clamp 0..1",type:"bool",default:!0}],evaluate(o,t,e,i){const a=I(t.height,"Adjust"),n=o.alloc(i.width,i.height,"R32F");return o.run("adjust",()=>`${b}
+uniform sampler2D uSrc; uniform float uMul; uniform float uAdd; uniform int uInvert; uniform int uClamp; out vec4 o;
+void main() {
+  float h = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r;
+  if (uInvert == 1) h = 1.0 - h;
+  h = h * uMul + uAdd;
+  if (uClamp == 1) h = clamp(h, 0.0, 1.0);
+  o = vec4(h, 0.0, 0.0, 1.0);
+}`,{uSrc:a,uMul:Number(e.multiply),uAdd:Number(e.add),uInvert:e.invert?1:0,uClamp:e.clamp?1:0},n),{height:n}}},Jt={type:"invert",title:"Invert",category:"Modifier",description:"1 - input.",...V,params:[],evaluate(o,t,e,i){const a=I(t.height,"Invert"),n=o.alloc(i.width,i.height,"R32F");return o.run("invert",()=>`${b}
+uniform sampler2D uSrc; out vec4 o;
+void main() { o = vec4(1.0 - texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r, 0.0, 0.0, 1.0); }`,{uSrc:a},n),{height:n}}},Qt=[Vt,zt,qt,Xt,Wt,jt,Yt,Kt,Jt],Ae={inputs:[{key:"height",label:"In",kind:"height"}],outputs:[{key:"height",label:"Out",kind:"height"}]},Zt={type:"slope",title:"Slope",category:"Data",description:"Mask from terrain steepness. Select an angle range; soft falloff.",...Ae,params:[{key:"minAngle",label:"Min angle",type:"float",default:20,min:0,max:90,step:1},{key:"maxAngle",label:"Max angle",type:"float",default:90,min:0,max:90,step:1},{key:"falloff",label:"Falloff",type:"float",default:10,min:0,max:45,step:.5},{key:"smooth",label:"Pre-smooth",type:"float",default:.001,min:0,max:.02,step:5e-4}],evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("Slope: input not connected");const n=Fe(o,a,Number(e.smooth)),s=o.alloc(i.width,i.height,"R32F");return o.run("slope",()=>`${b}${k}${We}
+uniform sampler2D uSrc; uniform float uHs; uniform vec2 uRange; uniform float uFalloff; out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec2 g = heightGradient(uSrc, p, uHs);
+  float ang = degrees(atan(length(g)));
+  float lo = smoothstep(uRange.x - uFalloff, uRange.x + 0.001, ang);
+  float hi = 1.0 - smoothstep(uRange.y - 0.001, uRange.y + uFalloff, ang);
+  o = vec4(lo * hi, 0.0, 0.0, 1.0);
+}`,{uSrc:n,uHs:i.heightRatio*i.width,uRange:[Number(e.minAngle),Number(e.maxAngle)],uFalloff:Math.max(Number(e.falloff),.001)},s),o.release(n),{height:s}}},ei={type:"heightmask",title:"Height",category:"Data",description:"Mask selecting an altitude band with soft edges.",...Ae,params:[{key:"low",label:"From",type:"float",default:.5,min:0,max:1,step:.005},{key:"high",label:"To",type:"float",default:1,min:0,max:1,step:.005},{key:"falloff",label:"Falloff",type:"float",default:.1,min:0,max:.5,step:.005}],evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("Height: input not connected");const n=o.alloc(i.width,i.height,"R32F");return o.run("heightmask",()=>`${b}
+uniform sampler2D uSrc; uniform vec2 uRange; uniform float uFalloff; out vec4 o;
+void main() {
+  float h = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r;
+  float f = max(uFalloff, 1e-4);
+  float lo = smoothstep(uRange.x - f, uRange.x, h);
+  float hi = 1.0 - smoothstep(uRange.y, uRange.y + f, h);
+  o = vec4(lo * hi, 0.0, 0.0, 1.0);
+}`,{uSrc:a,uRange:[Number(e.low),Number(e.high)],uFalloff:Number(e.falloff)},n),{height:n}}},ti={type:"curvature",title:"Curvature",category:"Data",description:"Convex (ridges) or concave (valleys) areas as a mask.",...Ae,params:[{key:"mode",label:"Mode",type:"select",default:"concave",options:[{value:"concave",label:"Concave (valleys)"},{value:"convex",label:"Convex (ridges)"},{value:"both",label:"Both (signed)"}]},{key:"radius",label:"Radius",type:"float",default:.003,min:5e-4,max:.03,step:5e-4},{key:"intensity",label:"Intensity",type:"float",default:1,min:.1,max:10,step:.1}],evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("Curvature: input not connected");const n=Fe(o,a,Number(e.radius)),s=o.alloc(i.width,i.height,"R32F"),r=e.mode==="convex"?1:e.mode==="both"?2:0;return o.run("curvature",()=>`${b}
+uniform sampler2D uSrc; uniform sampler2D uBlur; uniform int uMode; uniform float uIntensity; uniform float uScale; out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float c = (texelFetch(uBlur, p, 0).r - texelFetch(uSrc, p, 0).r) * uScale * uIntensity;
+  float r = uMode == 0 ? max(c, 0.0) : uMode == 1 ? max(-c, 0.0) : c * 0.5 + 0.5;
+  o = vec4(clamp(r, 0.0, 1.0), 0.0, 0.0, 1.0);
+}`,{uSrc:a,uBlur:n,uMode:r,uIntensity:Number(e.intensity),uScale:.08/Number(e.radius)},s),o.release(n),{height:s}}},ii=[Zt,ei,ti],pe={alpine:{label:"Alpine",stops:[{t:0,color:[.16,.25,.12]},{t:.18,color:[.26,.38,.17]},{t:.35,color:[.42,.44,.26]},{t:.5,color:[.45,.4,.33]},{t:.68,color:[.52,.5,.47]},{t:.82,color:[.78,.78,.76]},{t:1,color:[.98,.98,1]}]},desert:{label:"Desert",stops:[{t:0,color:[.55,.42,.28]},{t:.3,color:[.72,.56,.36]},{t:.55,color:[.8,.64,.42]},{t:.75,color:[.62,.45,.33]},{t:1,color:[.46,.33,.27]}]},canyon:{label:"Canyon",stops:[{t:0,color:[.35,.22,.16]},{t:.25,color:[.62,.33,.2]},{t:.45,color:[.8,.52,.3]},{t:.6,color:[.7,.4,.26]},{t:.8,color:[.86,.68,.46]},{t:1,color:[.65,.58,.5]}]},volcanic:{label:"Volcanic",stops:[{t:0,color:[.08,.08,.09]},{t:.3,color:[.18,.16,.16]},{t:.6,color:[.32,.28,.26]},{t:.85,color:[.5,.42,.38]},{t:1,color:[.72,.65,.6]}]},tundra:{label:"Tundra",stops:[{t:0,color:[.3,.36,.3]},{t:.3,color:[.46,.5,.38]},{t:.55,color:[.58,.58,.52]},{t:.75,color:[.8,.8,.8]},{t:1,color:[1,1,1]}]},grayscale:{label:"Grayscale",stops:[{t:0,color:[0,0,0]},{t:1,color:[1,1,1]}]},hypsometric:{label:"Hypsometric",stops:[{t:0,color:[.1,.3,.6]},{t:.2,color:[.2,.6,.3]},{t:.4,color:[.8,.8,.3]},{t:.6,color:[.8,.5,.2]},{t:.8,color:[.6,.3,.2]},{t:1,color:[1,1,1]}]}};function oi(o){const t=new Float32Array(32);for(let e=0;e<8;e++){const i=o[Math.min(e,o.length-1)];t[e*4]=i.color[0],t[e*4+1]=i.color[1],t[e*4+2]=i.color[2],t[e*4+3]=i.t}return t}const ai={type:"satmap",title:"SatMap",category:"Color",description:"Colorizes the terrain by altitude using a satellite-style gradient, with slope rock, flow wetness and snow.",inputs:[{key:"height",label:"In",kind:"height"},{key:"flow",label:"Flow",kind:"height",optional:!0},{key:"mask",label:"Mask",kind:"height",optional:!0}],outputs:[{key:"color",label:"Color",kind:"color"},{key:"height",label:"Height",kind:"height"}],params:[{key:"preset",label:"Library",type:"select",default:"alpine",options:Object.entries(pe).map(([o,t])=>({value:o,label:t.label}))},{key:"rockAngle",label:"Rock angle",type:"float",default:40,min:10,max:90,step:1,hint:"Slopes steeper than this show rock"},{key:"rockStrength",label:"Rock strength",type:"float",default:.7,min:0,max:1,step:.01},{key:"snowLine",label:"Snow line",type:"float",default:.78,min:0,max:1.5,step:.01,hint:"Above 1 disables snow"},{key:"flowTint",label:"Flow wetness",type:"float",default:.5,min:0,max:1,step:.01},{key:"variation",label:"Variation",type:"float",default:.25,min:0,max:1,step:.01,hint:"Noise-based color variation"},{key:"seed",label:"Seed",type:"seed",default:5,min:0,max:99999,step:1}],evaluate(o,t,e,i){const a=t.height;if(!a)throw new Error("SatMap: input not connected");const n=pe[String(e.preset)]??pe.alpine,s=o.alloc(i.width,i.height,"RGBA8");return o.run("satmap",()=>`${b}${k}${We}${H}
+uniform sampler2D uH; uniform sampler2D uFlow; uniform sampler2D uMask; uniform int uHasFlow; uniform int uHasMask;
+uniform vec4 uStops[8]; uniform int uNumStops; uniform float uHs;
+uniform float uRockAngle; uniform float uRockStrength; uniform float uSnowLine; uniform float uFlowTint; uniform float uVariation; uniform int uSeed; uniform float uAspect;
+out vec4 o;
+vec3 gradient(float t) {
+  vec3 c = uStops[0].rgb;
+  for (int i = 1; i < 8; i++) {
+    if (i >= uNumStops) break;
+    float a = uStops[i - 1].a, b = uStops[i].a;
+    float f = clamp((t - a) / max(b - a, 1e-5), 0.0, 1.0);
+    c = mix(c, uStops[i].rgb, f);
+  }
+  return c;
+}
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float h = texelFetch(uH, p, 0).r;
+  vec2 g = heightGradient(uH, p, uHs);
+  float ang = degrees(atan(length(g)));
+  vec2 q = vec2(vUv.x * uAspect, vUv.y);
+  float var = fbm(q * 12.0, 4, 2.0, 0.5, uint(uSeed)) * 0.5;
+  float ht = clamp(h + var * uVariation * 0.25, 0.0, 1.0);
+  vec3 col = gradient(ht);
+  col *= 1.0 + var * uVariation * 0.5;
+  // rock on steep slopes
+  float rock = smoothstep(uRockAngle - 10.0, uRockAngle + 10.0, ang) * uRockStrength;
+  vec3 rockCol = mix(vec3(0.36, 0.33, 0.30), vec3(0.55, 0.52, 0.48), fbm(q * 40.0, 3, 2.0, 0.5, uint(uSeed) + 9u) * 0.5 + 0.5);
+  col = mix(col, rockCol, rock);
+  // snow above snow line, less on steep slopes
+  float snow = smoothstep(uSnowLine - 0.08, uSnowLine + 0.05, h + var * 0.05) * (1.0 - smoothstep(35.0, 65.0, ang));
+  col = mix(col, vec3(0.96, 0.97, 1.0), snow);
+  if (uHasFlow == 1) {
+    float f = sampleBilinear(uFlow, vUv).r;
+    col = mix(col, col * vec3(0.55, 0.6, 0.62), clamp(f * 1.5, 0.0, 1.0) * uFlowTint);
+  }
+  if (uHasMask == 1) col *= mix(0.3, 1.0, sampleBilinear(uMask, vUv).r);
+  o = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 1.1)), 1.0);
+}`,{uH:a,uFlow:t.flow??a,uMask:t.mask??a,uHasFlow:t.flow?1:0,uHasMask:t.mask?1:0,uStops:oi(n.stops),uNumStops:n.stops.length,uHs:i.heightRatio*i.width,uRockAngle:Number(e.rockAngle),uRockStrength:Number(e.rockStrength),uSnowLine:Number(e.snowLine),uFlowTint:Number(e.flowTint),uVariation:Number(e.variation),uSeed:Number(e.seed)|0,uAspect:i.width/i.height},s),{color:s,height:o.pool.retain(a)}}},ni={type:"mixer",title:"Mixer",category:"Color",description:"Blend two color maps by a mask (e.g. sediment in valleys, rock on ridges).",inputs:[{key:"a",label:"A",kind:"color"},{key:"b",label:"B",kind:"color"},{key:"mask",label:"Mask",kind:"height"},{key:"height",label:"Height",kind:"height",optional:!0}],outputs:[{key:"color",label:"Color",kind:"color"},{key:"height",label:"Height",kind:"height"}],params:[{key:"ratio",label:"Ratio",type:"float",default:1,min:0,max:1,step:.01},{key:"contrast",label:"Mask contrast",type:"float",default:1,min:.2,max:5,step:.05}],evaluate(o,t,e,i){const a=t.a,n=t.b;if(!a||!n)throw new Error("Mixer: connect both color inputs");const s=o.alloc(i.width,i.height,"RGBA8");o.run("mixer",()=>`${b}${k}
+uniform sampler2D uA; uniform sampler2D uB; uniform sampler2D uMask; uniform int uHasMask; uniform float uRatio; uniform float uContrast; out vec4 o;
+void main() {
+  vec4 a = sampleBilinear(uA, vUv), b = sampleBilinear(uB, vUv);
+  float m = uHasMask == 1 ? sampleBilinear(uMask, vUv).r : 1.0;
+  m = clamp((m - 0.5) * uContrast + 0.5, 0.0, 1.0) * uRatio;
+  o = vec4(mix(a.rgb, b.rgb, m), 1.0);
+}`,{uA:a,uB:n,uMask:t.mask??a,uHasMask:t.mask?1:0,uRatio:Number(e.ratio),uContrast:Number(e.contrast)},s);const r=t.height,l={color:s};if(r)l.height=o.pool.retain(r);else{const c=o.alloc(i.width,i.height,"R32F");o.fill(c,[.5,0,0,1]),l.height=c}return l}},si=[ai,ni],be=[...Ct,...Gt,...Qt,...ii,...si],ri=new Map(be.map(o=>[o.type,o]));function E(o){const t=ri.get(o);if(!t)throw new Error(`Unknown node type: ${o}`);return t}class li{constructor(t){this.engine=t}cache=new Map;cancelFlag=!1;building=!1;onProgress=()=>{};cancel(){this.cancelFlag=!0}invalidate(t){for(const[e,i]of this.cache)if(!(t&&t.has(e))){for(const a of Object.values(i.outputs))this.engine.release(a);this.cache.delete(e)}}getOutputs(t){return this.cache.get(t)?.outputs}async build(t,e,i){if(this.building)throw new Error("A build is already running");this.building=!0,this.cancelFlag=!1;const a=performance.now(),n=[];try{const s=wt(t),r=i?Ye(t,i):new Set(t.nodes.map(d=>d.id)),l=s.filter(d=>r.has(d.id)),c=new Map,u=[];for(const d of l){const x={};for(const[M,C]of Object.entries(d.inputs))x[M]=C?`${c.get(C.node)??"missing"}#${C.port}`:null;const w=ye({t:d.type,p:d.params,i:x,w:e.width,h:e.height,r:e.heightRatio,pv:e.preview});c.set(d.id,w);const S=this.cache.get(d.id);(!S||S.key!==w)&&u.push(d)}const m=Math.min(1500,e.budgetMs*.1),p=a+e.budgetMs-m;let v=u.filter(d=>E(d.type).heavy).length;const g=[];for(let d=0;d<l.length;d++){const x=l[d],w=E(x.type),S=c.get(x.id),M=this.cache.get(x.id);if(M&&M.key===S)continue;if(this.cancelFlag)throw new Error("cancelled");const C={};for(const F of w.inputs){const L=x.inputs[F.key],te=L?this.cache.get(L.node)?.outputs[L.port]??null:null;if(!te&&!F.optional)throw new Error(`${w.title}: input "${F.label}" is not connected`);C[F.key]=te}const X=d/l.length;this.onProgress(X,`${w.title}…`);const W=await w.evaluate(this.engine,C,x.params,{width:e.width,height:e.height,heightRatio:e.heightRatio,deadline:p,timeShare:w.heavy?1/Math.max(v,1):1,preview:e.preview,cancelled:()=>this.cancelFlag,progress:(F,L)=>{F>=1&&L.includes("budget")&&n.push(`${w.title}: ${L}`),this.onProgress(X+F/l.length,`${w.title}: ${L}`)}});if(w.heavy&&v--,M)for(const F of Object.values(M.outputs))this.engine.release(F);this.cache.set(x.id,{key:S,outputs:W}),g.push(x.id)}this.invalidate(new Set(t.nodes.map(d=>d.id)));const y=new Map;for(const d of l)y.set(d.id,this.cache.get(d.id).outputs);return await this.engine.sync(),{outputs:y,timeMs:performance.now()-a,evaluated:g,notes:n}}finally{this.building=!1}}}function ui(o,t,e=0,i=1){const a=o.alloc(t.width,t.height,"RGBA8");o.run("pack16",()=>`${b}
+uniform sampler2D uSrc; uniform float uLo; uniform float uInvRange; out vec4 o;
+void main() {
+  float v = clamp((texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r - uLo) * uInvRange, 0.0, 1.0);
+  float q = floor(v * 65535.0 + 0.5);
+  float hi = floor(q / 256.0);
+  float lo = q - hi * 256.0;
+  o = vec4(hi / 255.0, lo / 255.0, 0.0, 1.0);
+}`,{uSrc:t,uLo:e,uInvRange:1/Math.max(i-e,1e-9)},a);const n=o.pool.readBytes(a);o.release(a);const s=t.width,r=t.height,l=new Uint16Array(s*r);for(let c=0;c<r;c++){const u=(r-1-c)*s,m=c*s;for(let p=0;p<s;p++){const v=(u+p)*4;l[m+p]=n[v]*256+n[v+1]}}return l}function ci(o,t){const e=o.pool.readBytes(t),i=t.width,a=t.height,n=new Uint8Array(i*a*4);for(let s=0;s<a;s++)n.set(e.subarray((a-1-s)*i*4,(a-s)*i*4),s*i*4);return n}const di=(()=>{const o=new Uint32Array(256);for(let t=0;t<256;t++){let e=t;for(let i=0;i<8;i++)e=e&1?3988292384^e>>>1:e>>>1;o[t]=e>>>0}return o})();function hi(o,t=0,e=o.length){let i=4294967295;for(let a=t;a<e;a++)i=di[(i^o[a])&255]^i>>>8;return(i^4294967295)>>>0}function pi(o){let t=1,e=0;for(let i=0;i<o.length;i++)t=(t+o[i])%65521,e=(e+t)%65521;return(e<<16|t)>>>0}function mi(o){const t=Math.ceil(o.length/65535)||1,e=new Uint8Array(2+o.length+t*5+4);let i=0;e[i++]=120,e[i++]=1;for(let n=0;n<t;n++){const s=n*65535,r=Math.min(65535,o.length-s);e[i++]=n===t-1?1:0,e[i++]=r&255,e[i++]=r>>8&255,e[i++]=~r&255,e[i++]=~r>>8&255,e.set(o.subarray(s,s+r),i),i+=r}const a=pi(o);return e[i++]=a>>>24&255,e[i++]=a>>>16&255,e[i++]=a>>>8&255,e[i++]=a&255,e.subarray(0,i)}async function fi(o){if(typeof CompressionStream>"u")return mi(o);const t=new CompressionStream("deflate"),e=t.writable.getWriter();e.write(o),e.close();const i=await new Response(t.readable).arrayBuffer();return new Uint8Array(i)}function me(o,t){const e=new Uint8Array(12+t.length),i=new DataView(e.buffer);return i.setUint32(0,t.length),e[4]=o.charCodeAt(0),e[5]=o.charCodeAt(1),e[6]=o.charCodeAt(2),e[7]=o.charCodeAt(3),e.set(t,8),i.setUint32(8+t.length,hi(e,4,8+t.length)),e}async function Ke(o,t,e,i){const n=o*(i===1?2:4),s=new Uint8Array((n+1)*t);for(let p=0;p<t;p++){const v=p*(n+1);if(s[v]=0,i===1){const g=e;for(let y=0;y<o;y++){const d=g[p*o+y];s[v+1+y*2]=d>>8,s[v+2+y*2]=d&255}}else s.set(e.subarray(p*n,(p+1)*n),v+1)}const r=new Uint8Array(13),l=new DataView(r.buffer);l.setUint32(0,o),l.setUint32(4,t),r[8]=i===1?16:8,r[9]=i===1?0:6,r[10]=0,r[11]=0,r[12]=0;const c=await fi(s),m=[new Uint8Array([137,80,78,71,13,10,26,10]),me("IHDR",r),me("IDAT",c),me("IEND",new Uint8Array(0))];return new Blob(m,{type:"image/png"})}function vi(o){const t=new Uint8Array(o.length*2);for(let e=0;e<o.length;e++)t[e*2]=o[e]&255,t[e*2+1]=o[e]>>8;return new Blob([t],{type:"application/octet-stream"})}function se(o,t){const e=URL.createObjectURL(o),i=document.createElement("a");i.href=e,i.download=t,document.body.appendChild(i),i.click(),i.remove(),setTimeout(()=>URL.revokeObjectURL(e),5e3)}function xe(o){const t={};for(const e of o.params)t[e.key]=e.default;return t}class gi{graph={nodes:[],output:null};selected=null;viewPort="height";settings={width:4e3,height:2500,heightRatio:.22,budgetSec:20,autoPreview:!0,previewWidth:1024,view:"3d"};listeners=new Map;on(t,e){let i=this.listeners.get(t);return i||this.listeners.set(t,i=new Set),i.add(e),()=>i.delete(e)}emit(t){this.listeners.get(t)?.forEach(e=>e())}node(t){return t?this.graph.nodes.find(e=>e.id===t):void 0}addNode(t,e,i){const a=E(t),n={id:kt(),type:t,x:e,y:i,params:xe(a),inputs:{}};for(const s of a.inputs)n.inputs[s.key]=null;return this.graph.nodes.push(n),this.graph.output||(this.graph.output=n.id),this.emit("graph"),n}removeNode(t){this.graph.nodes=this.graph.nodes.filter(e=>e.id!==t);for(const e of this.graph.nodes)for(const[i,a]of Object.entries(e.inputs))a&&a.node===t&&(e.inputs[i]=null);this.graph.output===t&&(this.graph.output=this.graph.nodes[this.graph.nodes.length-1]?.id??null),this.selected===t&&this.select(this.graph.output),this.emit("graph")}connect(t,e,i){const a=this.node(e);a&&(a.inputs[i]=t,this.emit("graph"))}disconnect(t,e){const i=this.node(t);!i||!i.inputs[e]||(i.inputs[e]=null,this.emit("graph"))}setParam(t,e,i){const a=this.node(t);!a||a.params[e]===i||(a.params[e]=i,this.emit("graph"))}select(t,e){const i=this.node(t);if(this.selected=i?t:null,i){const a=E(i.type);this.viewPort=e&&a.outputs.some(n=>n.key===e)?e:a.outputs[0].key}this.emit("selection")}setOutput(t){this.graph.output=t,this.emit("graph")}loadGraph(t){const e=t.nodes.filter(i=>{try{return E(i.type),!0}catch{return!1}});for(const i of e){const a=E(i.type);i.params={...xe(a),...i.params};const n={};for(const s of a.inputs)n[s.key]=i.inputs?.[s.key]??null;i.inputs=n}this.graph={nodes:e,output:t.output&&e.some(i=>i.id===t.output)?t.output:e[e.length-1]?.id??null},this.emit("graph"),this.select(this.graph.output)}updateSettings(t){Object.assign(this.settings,t),this.emit("settings")}}const we=170,Ce=26,Le=20,Ue={Primitive:"#3b82f6",Erosion:"#d97706",Modifier:"#8b5cf6",Data:"#10b981",Color:"#ec4899",Utility:"#64748b"};function Ge(o){const t=E(o.type);return Ce+Math.max(t.inputs.length,t.outputs.length)*Le+8}function yi(o,t){return[o.x,o.y+Ce+10+t*Le]}function Ve(o,t){return[o.x+we,o.y+Ce+10+t*Le]}class bi{constructor(t,e){this.state=e,this.root=t,this.root.classList.add("graph-root"),this.root.innerHTML=`
+      <div class="graph-toolbar">
+        <button class="btn" data-action="add">+ Add node</button>
+        <button class="btn" data-action="fit">Fit</button>
+        <span class="hint">Drag ports to connect · Double-click canvas to add · Del removes · Right-click node for options</span>
+      </div>
+      <div class="graph-world"><svg class="graph-links"></svg><div class="graph-nodes"></div></div>`,this.world=this.root.querySelector(".graph-world"),this.svg=this.root.querySelector(".graph-links"),this.nodesLayer=this.root.querySelector(".graph-nodes"),this.root.querySelector('[data-action="add"]').addEventListener("click",i=>this.showAddMenu(i)),this.root.querySelector('[data-action="fit"]').addEventListener("click",()=>this.fit()),this.bindCanvas(),e.on("graph",()=>this.render()),e.on("selection",()=>this.updateSelection()),this.render()}root;world;svg;nodesLayer;pan={x:20,y:20};zoom=1;dragLink=null;menu=null;nodeEls=new Map;toWorld(t,e){const i=this.world.getBoundingClientRect();return[(t-i.left-this.pan.x)/this.zoom,(e-i.top-this.pan.y)/this.zoom]}applyTransform(){const t=`translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})`;this.nodesLayer.style.transform=t,this.svg.style.transform=t}fit(){const t=this.state.graph.nodes;if(!t.length)return;let e=1/0,i=1/0,a=-1/0,n=-1/0;for(const l of t)e=Math.min(e,l.x),i=Math.min(i,l.y),a=Math.max(a,l.x+we),n=Math.max(n,l.y+Ge(l));const s=this.world.getBoundingClientRect(),r=30;this.zoom=Math.min(1.25,Math.max(.3,Math.min((s.width-r*2)/(a-e),(s.height-r*2)/(n-i)))),this.pan.x=(s.width-(a-e)*this.zoom)/2-e*this.zoom,this.pan.y=(s.height-(n-i)*this.zoom)/2-i*this.zoom,this.applyTransform()}bindCanvas(){let t=null;this.world.addEventListener("pointerdown",i=>{i.target!==this.world&&i.target!==this.svg&&i.target!==this.nodesLayer||(this.closeMenu(),(i.button===0||i.button===1)&&(t={sx:i.clientX,sy:i.clientY,px:this.pan.x,py:this.pan.y},this.world.setPointerCapture(i.pointerId)))}),this.world.addEventListener("pointermove",i=>{if(t&&(this.pan.x=t.px+(i.clientX-t.sx),this.pan.y=t.py+(i.clientY-t.sy),this.applyTransform()),this.dragLink){const[a,n]=this.toWorld(i.clientX,i.clientY);this.dragLink.x=a,this.dragLink.y=n,this.renderLinks()}});const e=()=>{t=null,this.dragLink&&(this.dragLink=null,this.renderLinks())};this.world.addEventListener("pointerup",e),this.world.addEventListener("pointercancel",e),this.world.addEventListener("wheel",i=>{i.preventDefault();const a=this.world.getBoundingClientRect(),n=i.clientX-a.left,s=i.clientY-a.top,r=Math.exp(-i.deltaY*.0015),l=Math.min(2,Math.max(.25,this.zoom*r));this.pan.x=n-(n-this.pan.x)*(l/this.zoom),this.pan.y=s-(s-this.pan.y)*(l/this.zoom),this.zoom=l,this.applyTransform()},{passive:!1}),this.world.addEventListener("dblclick",i=>{i.target!==this.world&&i.target!==this.svg&&i.target!==this.nodesLayer||this.showAddMenu(i,this.toWorld(i.clientX,i.clientY))}),this.world.addEventListener("contextmenu",i=>i.preventDefault()),window.addEventListener("keydown",i=>{(i.key==="Delete"||i.key==="Backspace")&&this.state.selected&&!(i.target instanceof HTMLInputElement)&&!(i.target instanceof HTMLSelectElement)&&this.state.removeNode(this.state.selected)})}closeMenu(){this.menu?.remove(),this.menu=null}showAddMenu(t,e){this.closeMenu();const i=document.createElement("div");i.className="ctx-menu";const a=this.root.getBoundingClientRect();i.style.left=`${t.clientX-a.left}px`,i.style.top=`${t.clientY-a.top}px`;const n=[...new Set(be.map(r=>r.category))];for(const r of n){const l=document.createElement("div");l.className="ctx-cat",l.textContent=r,l.style.color=Ue[r],i.appendChild(l);for(const c of be.filter(u=>u.category===r)){const u=document.createElement("div");u.className="ctx-item",u.textContent=c.title,u.title=c.description,u.addEventListener("click",()=>{const m=e??this.toWorld(t.clientX,t.clientY),p=this.state.addNode(c.type,m[0],m[1]);this.state.select(p.id),this.closeMenu()}),i.appendChild(u)}}this.root.appendChild(i),this.menu=i;const s=r=>{i.contains(r.target)||(this.closeMenu(),window.removeEventListener("pointerdown",s))};setTimeout(()=>window.addEventListener("pointerdown",s),0)}showNodeMenu(t,e){this.closeMenu();const i=document.createElement("div");i.className="ctx-menu";const a=this.root.getBoundingClientRect();i.style.left=`${t.clientX-a.left}px`,i.style.top=`${t.clientY-a.top}px`;const n=[["Set as output",()=>this.state.setOutput(e.id)],["Duplicate",()=>{const r=this.state.addNode(e.type,e.x+30,e.y+30);r.params={...e.params},r.inputs={...e.inputs},this.state.emit("graph"),this.state.select(r.id)}],["Delete",()=>this.state.removeNode(e.id)]];for(const[r,l]of n){const c=document.createElement("div");c.className="ctx-item",c.textContent=r,c.addEventListener("click",()=>{l(),this.closeMenu()}),i.appendChild(c)}this.root.appendChild(i),this.menu=i;const s=r=>{i.contains(r.target)||(this.closeMenu(),window.removeEventListener("pointerdown",s))};setTimeout(()=>window.addEventListener("pointerdown",s),0)}render(){const t=this.state.graph,e=new Set(t.nodes.map(i=>i.id));for(const[i,a]of this.nodeEls)e.has(i)||(a.remove(),this.nodeEls.delete(i));for(const i of t.nodes){let a=this.nodeEls.get(i.id);a||(a=this.createNodeEl(i),this.nodeEls.set(i.id,a),this.nodesLayer.appendChild(a)),a.style.left=`${i.x}px`,a.style.top=`${i.y}px`,a.classList.toggle("is-output",t.output===i.id),E(i.type).inputs.forEach((s,r)=>{a.querySelectorAll(".port-in .dot")[r]?.classList.toggle("connected",!!i.inputs[s.key])})}this.updateSelection(),this.renderLinks(),this.applyTransform()}updateSelection(){for(const[e,i]of this.nodeEls)i.classList.toggle("selected",e===this.state.selected);const t=this.state.node(this.state.selected);for(const[e,i]of this.nodeEls)i.querySelectorAll(".port-out .dot").forEach((a,n)=>{const s=E(this.state.node(e).type);a.classList.toggle("viewing",!!t&&e===t.id&&s.outputs[n].key===this.state.viewPort)})}createNodeEl(t){const e=E(t.type),i=document.createElement("div");return i.className="node",i.style.width=`${we}px`,i.innerHTML=`
+      <div class="node-header" style="background:${Ue[e.category]}"><span class="node-title">${e.title}</span><span class="out-badge">OUT</span></div>
+      <div class="node-body">
+        <div class="ports port-in">${e.inputs.map(n=>`<div class="port" data-port="${n.key}" data-kind="${n.kind}"><span class="dot kind-${n.kind}"></span><span class="label">${n.label}</span></div>`).join("")}</div>
+        <div class="ports port-out">${e.outputs.map(n=>`<div class="port" data-port="${n.key}" data-kind="${n.kind}"><span class="label">${n.label}</span><span class="dot kind-${n.kind}"></span></div>`).join("")}</div>
+      </div>`,i.style.height=`${Ge(t)}px`,i.title=e.description,i.querySelector(".node-header").addEventListener("pointerdown",n=>{if(n.button!==0)return;n.stopPropagation(),this.closeMenu(),this.state.select(t.id,this.state.selected===t.id?this.state.viewPort:void 0);const[s,r]=this.toWorld(n.clientX,n.clientY),l=t.x-s,c=t.y-r,u=p=>{const[v,g]=this.toWorld(p.clientX,p.clientY);t.x=Math.round(v+l),t.y=Math.round(g+c),i.style.left=`${t.x}px`,i.style.top=`${t.y}px`,this.renderLinks()},m=()=>{window.removeEventListener("pointermove",u),window.removeEventListener("pointerup",m)};window.addEventListener("pointermove",u),window.addEventListener("pointerup",m)}),i.addEventListener("pointerdown",n=>{n.button===0&&!n.target.closest(".dot")&&(n.stopPropagation(),this.state.select(t.id,this.state.selected===t.id?this.state.viewPort:void 0))}),i.addEventListener("contextmenu",n=>{n.preventDefault(),n.stopPropagation(),this.showNodeMenu(n,t)}),i.querySelectorAll(".port-out .port").forEach(n=>{const s=n.dataset.port,r=n.dataset.kind;n.querySelector(".dot").addEventListener("pointerdown",l=>{l.stopPropagation();const c=l;if(c.button!==0)return;this.state.select(t.id,s);const[u,m]=this.toWorld(c.clientX,c.clientY);this.dragLink={from:{node:t.id,port:s,kind:r},x:u,y:m};const p=g=>{if(this.dragLink){const[y,d]=this.toWorld(g.clientX,g.clientY);this.dragLink.x=y,this.dragLink.y=d,this.renderLinks()}},v=g=>{window.removeEventListener("pointermove",p),window.removeEventListener("pointerup",v);const y=document.elementFromPoint(g.clientX,g.clientY)?.closest(".port-in .port");if(y&&this.dragLink){const d=y.closest(".node"),x=[...this.nodeEls.entries()].find(([,M])=>M===d)?.[0],w=y.dataset.port,S=y.dataset.kind;x&&S===r&&!_e(this.state.graph,t.id,x)&&this.state.connect({node:t.id,port:s},x,w)}this.dragLink=null,this.renderLinks()};window.addEventListener("pointermove",p),window.addEventListener("pointerup",v)})}),i.querySelectorAll(".port-in .port").forEach(n=>{const s=n.dataset.port;n.querySelector(".dot").addEventListener("pointerdown",r=>{r.stopPropagation();const l=t.inputs[s];if(!l)return;this.state.disconnect(t.id,s);const c=this.state.node(l.node);if(!c)return;const u=E(c.type).outputs.find(d=>d.key===l.port)?.kind??"height",m=r,[p,v]=this.toWorld(m.clientX,m.clientY);this.dragLink={from:{node:l.node,port:l.port,kind:u},x:p,y:v};const g=d=>{if(this.dragLink){const[x,w]=this.toWorld(d.clientX,d.clientY);this.dragLink.x=x,this.dragLink.y=w,this.renderLinks()}},y=d=>{window.removeEventListener("pointermove",g),window.removeEventListener("pointerup",y);const x=document.elementFromPoint(d.clientX,d.clientY)?.closest(".port-in .port");if(x&&this.dragLink){const w=x.closest(".node"),S=[...this.nodeEls.entries()].find(([,M])=>M===w)?.[0];S&&x.dataset.kind===u&&!_e(this.state.graph,l.node,S)&&this.state.connect({node:l.node,port:l.port},S,x.dataset.port)}this.dragLink=null,this.renderLinks()};window.addEventListener("pointermove",g),window.addEventListener("pointerup",y)})}),i}renderLinks(){const t=this.state.graph,e=new Map(t.nodes.map(n=>[n.id,n]));let i="";const a=(n,s,r,l,c)=>{const u=Math.max(40,Math.abs(r-n)*.5);return`<path class="link ${c}" d="M${n},${s} C${n+u},${s} ${r-u},${l} ${r},${l}"/>`};for(const n of t.nodes)E(n.type).inputs.forEach((r,l)=>{const c=n.inputs[r.key];if(!c)return;const u=e.get(c.node);if(!u)return;const p=E(u.type).outputs.findIndex(x=>x.key===c.port);if(p<0)return;const[v,g]=Ve(u,p),[y,d]=yi(n,l);i+=a(v,g,y,d,`kind-${r.kind}`)});if(this.dragLink){const n=e.get(this.dragLink.from.node);if(n){const s=E(n.type).outputs.findIndex(c=>c.key===this.dragLink.from.port),[r,l]=Ve(n,s);i+=a(r,l,this.dragLink.x,this.dragLink.y,`kind-${this.dragLink.from.kind} dragging`)}}this.svg.innerHTML=i}}class xi{constructor(t,e){this.root=t,this.state=e,e.on("selection",()=>this.render()),e.on("graph",()=>this.renderIfStructureChanged()),this.render()}lastKey="";renderIfStructureChanged(){const t=this.state.node(this.state.selected);(t?`${t.id}:${t.type}`:"")!==this.lastKey&&this.render()}render(){const t=this.state.node(this.state.selected);if(this.lastKey=t?`${t.id}:${t.type}`:"",this.root.innerHTML="",!t){this.root.innerHTML='<div class="props-empty">Select a node to edit its properties.</div>';return}const e=E(t.type),i=document.createElement("div");if(i.className="props-head",i.innerHTML=`<div class="props-title">${e.title}</div><div class="props-desc">${e.description}</div>`,this.root.appendChild(i),e.outputs.length>1){const r=document.createElement("div");r.className="prop-row",r.innerHTML="<label>View output</label>";const l=document.createElement("select");for(const c of e.outputs){const u=document.createElement("option");u.value=c.key,u.textContent=c.label,u.selected=c.key===this.state.viewPort,l.appendChild(u)}l.addEventListener("change",()=>this.state.select(t.id,l.value)),r.appendChild(l),this.root.appendChild(r)}for(const r of e.params)this.root.appendChild(this.paramRow(t.id,r,t.params[r.key]));const a=document.createElement("div");a.className="props-actions";const n=document.createElement("button");n.className="btn",n.textContent=this.state.graph.output===t.id?"✓ Output node":"Set as output",n.addEventListener("click",()=>{this.state.setOutput(t.id),this.render()}),a.appendChild(n);const s=document.createElement("button");s.className="btn",s.textContent="Reset",s.addEventListener("click",()=>{for(const r of e.params)this.state.setParam(t.id,r.key,r.default);this.render()}),a.appendChild(s),this.root.appendChild(a)}paramRow(t,e,i){const a=document.createElement("div");a.className="prop-row";const n=document.createElement("label");if(n.textContent=e.label,e.hint&&(n.title=e.hint),a.appendChild(n),e.type==="select"){const s=document.createElement("select");for(const r of e.options??[]){const l=document.createElement("option");l.value=r.value,l.textContent=r.label,l.selected=r.value===i,s.appendChild(l)}s.addEventListener("change",()=>this.state.setParam(t,e.key,s.value)),a.appendChild(s)}else if(e.type==="bool"){const s=document.createElement("input");s.type="checkbox",s.checked=!!i,s.addEventListener("change",()=>this.state.setParam(t,e.key,s.checked)),a.appendChild(s)}else{const s=document.createElement("div");s.className="slider-wrap";const r=document.createElement("input");r.type="range",r.min=String(e.min??0),r.max=String(e.max??1),r.step=String(e.step??.01),r.value=String(i);const l=document.createElement("input");l.type="number",l.min=r.min,l.max=r.max,l.step=r.step,l.value=String(i);const c=u=>{if(Number.isNaN(u))return;const m=Math.min(Number(r.max),Math.max(Number(r.min),u)),p=e.type==="int"||e.type==="seed"?Math.round(m):m;r.value=String(p),l.value=String(p),this.state.setParam(t,e.key,p)};if(r.addEventListener("input",()=>c(Number(r.value))),l.addEventListener("change",()=>c(Number(l.value))),s.appendChild(r),s.appendChild(l),e.type==="seed"){const u=document.createElement("button");u.className="btn btn-small",u.textContent="🎲",u.title="Randomize seed",u.addEventListener("click",()=>c(Math.floor(Math.random()*99999))),s.appendChild(u)}a.appendChild(s)}return a}}const wi=`${b}${k}
+uniform sampler2D uH; uniform sampler2D uColor; uniform sampler2D uOverlay;
+uniform int uMode;        // 0 clay, 1 color, 2 overlay
+uniform float uHs; uniform vec3 uSun; uniform vec2 uOffset; uniform vec2 uSize; uniform vec2 uCanvas;
+out vec4 o;
+void main() {
+  vec2 px = gl_FragCoord.xy;
+  vec2 uv = (px - uOffset) / uSize;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { o = vec4(0.09, 0.09, 0.1, 1.0); return; }
+  if (uMode == 2) { float m = sampleBilinear(uOverlay, uv).r; o = vec4(vec3(m), 1.0); return; }
+  ivec2 res = textureSize(uH, 0);
+  vec2 tp = uv * vec2(res);
+  float e = max(1.0, float(res.x) / uSize.x);  // sample spacing in texels relative to screen pixels
+  float l = sampleBilinearPx(uH, tp + vec2(-e, 0.0)).r, r = sampleBilinearPx(uH, tp + vec2(e, 0.0)).r;
+  float d = sampleBilinearPx(uH, tp + vec2(0.0, -e)).r, u = sampleBilinearPx(uH, tp + vec2(0.0, e)).r;
+  vec2 g = vec2(r - l, u - d) / (2.0 * e) * uHs;
+  vec3 n = normalize(vec3(-g.x, -g.y, 1.0));
+  float diff = max(dot(n, normalize(uSun)), 0.0);
+  float amb = 0.35 + 0.15 * n.z;
+  float h = sampleBilinearPx(uH, tp).r;
+  vec3 albedo;
+  if (uMode == 1) albedo = sampleBilinear(uColor, uv).rgb;
+  else albedo = mix(vec3(0.62, 0.60, 0.56), vec3(0.92, 0.91, 0.88), h);
+  o = vec4(albedo * (diff * 0.85 + amb), 1.0);
+}`,ki=`#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+${k}
+uniform sampler2D uH; uniform mat4 uViewProj; uniform ivec2 uGrid; uniform float uAspect; uniform float uHeightScale;
+out vec2 vUv; out vec3 vWorld;
+void main() {
+  int ix = gl_VertexID % uGrid.x;
+  int iy = gl_VertexID / uGrid.x;
+  vec2 uv = vec2(float(ix) / float(uGrid.x - 1), float(iy) / float(uGrid.y - 1));
+  float h = sampleBilinear(uH, uv).r;
+  vec3 w = vec3((uv.x - 0.5) * uAspect, h * uHeightScale, 0.5 - uv.y);
+  vUv = uv; vWorld = w;
+  gl_Position = uViewProj * vec4(w, 1.0);
+}`,Si=`#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+${k}
+in vec2 vUv; in vec3 vWorld;
+uniform sampler2D uH; uniform sampler2D uColor; uniform sampler2D uOverlay;
+uniform int uMode; uniform float uHs; uniform vec3 uSun; uniform vec3 uCam; uniform vec3 uSky; uniform float uAspect;
+out vec4 o;
+void main() {
+  ivec2 res = textureSize(uH, 0);
+  vec2 tp = vUv * vec2(res);
+  float l = sampleBilinearPx(uH, tp + vec2(-1.0, 0.0)).r, r = sampleBilinearPx(uH, tp + vec2(1.0, 0.0)).r;
+  float d = sampleBilinearPx(uH, tp + vec2(0.0, -1.0)).r, u = sampleBilinearPx(uH, tp + vec2(0.0, 1.0)).r;
+  vec2 g = vec2(r - l, u - d) * 0.5 * uHs;
+  vec3 n = normalize(vec3(-g.x, 1.0, g.y));
+  float h = sampleBilinearPx(uH, tp).r;
+  vec3 albedo;
+  if (uMode == 1) albedo = sampleBilinear(uColor, vUv).rgb;
+  else if (uMode == 2) { float m = sampleBilinear(uOverlay, vUv).r; albedo = mix(vec3(0.12, 0.13, 0.16), vec3(1.0, 0.98, 0.9), m); }
+  else albedo = mix(vec3(0.60, 0.58, 0.54), vec3(0.93, 0.92, 0.89), h);
+  vec3 sun = normalize(uSun);
+  float diff = max(dot(n, sun), 0.0);
+  vec3 ambient = mix(vec3(0.22, 0.2, 0.18), uSky * 0.9, n.y * 0.5 + 0.5) * 0.6;
+  vec3 v = normalize(uCam - vWorld);
+  float spec = pow(max(dot(normalize(sun + v), n), 0.0), 24.0) * 0.08;
+  vec3 col = albedo * (diff * vec3(1.0, 0.96, 0.9) * 1.05 + ambient) + spec;
+  // edge darkening outside map, fog by distance
+  float dist = length(uCam - vWorld);
+  float fog = 1.0 - exp(-dist * dist * 0.08 / (uAspect * uAspect));
+  col = mix(col, uSky, clamp(fog, 0.0, 0.85));
+  o = vec4(pow(col, vec3(1.0 / 1.05)), 1.0);
+}`;function Ei(o,t,e,i){const a=1/Math.tan(o/2),n=new Float32Array(16);return n[0]=a/t,n[5]=a,n[10]=(i+e)/(e-i),n[11]=-1,n[14]=2*i*e/(e-i),n}function Mi(o,t,e){const i=ze([o[0]-t[0],o[1]-t[1],o[2]-t[2]]),a=ze(qe(e,i)),n=qe(i,a),s=new Float32Array(16);return s[0]=a[0],s[4]=a[1],s[8]=a[2],s[1]=n[0],s[5]=n[1],s[9]=n[2],s[2]=i[0],s[6]=i[1],s[10]=i[2],s[12]=-fe(a,o),s[13]=-fe(n,o),s[14]=-fe(i,o),s[15]=1,s}function Ri(o,t){const e=new Float32Array(16);for(let i=0;i<4;i++)for(let a=0;a<4;a++){let n=0;for(let s=0;s<4;s++)n+=o[s*4+a]*t[i*4+s];e[i*4+a]=n}return e}const ze=o=>{const t=Math.hypot(o[0],o[1],o[2])||1;return[o[0]/t,o[1]/t,o[2]/t]},qe=(o,t)=>[o[1]*t[2]-o[2]*t[1],o[2]*t[0]-o[0]*t[2],o[0]*t[1]-o[1]*t[0]],fe=(o,t)=>o[0]*t[0]+o[1]*t[1]+o[2]*t[2];class Fi{constructor(t,e,i){this.ctx=t,this.engine=e,this.canvas=i,this.prog2d=new ge(t,wi,void 0,"view2d"),this.prog3d=new ge(t,Si,ki,"terrain3d");const n=t.gl.createVertexArray();this.meshVao=n,this.bindInput(),new ResizeObserver(()=>this.resize()).observe(i),this.resize();const r=()=>{this.needsDraw&&(this.needsDraw=!1,this.draw()),requestAnimationFrame(r)};requestAnimationFrame(r)}mode="3d";heightRatio=.22;content={geometry:null,overlay:null,color:null};prog2d;prog3d;meshVao;meshIndexCount=0;grid=[2,2];cam={yaw:.55,pitch:.62,dist:2.3,target:[0,.03,0]};view2d={zoom:1,panX:0,panY:0};sun=[-.55,.75,.4];needsDraw=!0;dpr=Math.min(window.devicePixelRatio||1,2);resize(){const t=Math.max(1,Math.floor(this.canvas.clientWidth*this.dpr)),e=Math.max(1,Math.floor(this.canvas.clientHeight*this.dpr));(this.canvas.width!==t||this.canvas.height!==e)&&(this.canvas.width=t,this.canvas.height=e),this.needsDraw=!0}setContent(t){const e=this.engine.pool;for(const i of[t.geometry,t.overlay,t.color])i&&e.retain(i);for(const i of[this.content.geometry,this.content.overlay,this.content.color])i&&e.release(i);this.content={...t},t.geometry&&this.ensureMesh(t.geometry.width/t.geometry.height),this.needsDraw=!0}invalidate(){this.needsDraw=!0}resetCamera(){this.cam={yaw:.55,pitch:.62,dist:2.3,target:[0,.03,0]},this.view2d={zoom:1,panX:0,panY:0},this.needsDraw=!0}ensureMesh(t){const i=Math.max(2,Math.round(1024/t));if(this.grid[0]===1024&&this.grid[1]===i)return;const a=this.ctx.gl;this.grid=[1024,i];const n=new Uint32Array(1023*(i-1)*6);let s=0;for(let l=0;l<i-1;l++)for(let c=0;c<1023;c++){const u=l*1024+c,m=u+1,p=u+1024,v=p+1;n[s++]=u,n[s++]=p,n[s++]=m,n[s++]=m,n[s++]=p,n[s++]=v}a.bindVertexArray(this.meshVao);const r=a.createBuffer();a.bindBuffer(a.ELEMENT_ARRAY_BUFFER,r),a.bufferData(a.ELEMENT_ARRAY_BUFFER,n,a.STATIC_DRAW),a.bindVertexArray(null),this.meshIndexCount=n.length}bindInput(){const t=this.canvas;let e=null;t.addEventListener("pointerdown",i=>{e={btn:i.button,x:i.clientX,y:i.clientY},t.setPointerCapture(i.pointerId)}),t.addEventListener("pointerup",()=>{e=null}),t.addEventListener("contextmenu",i=>i.preventDefault()),t.addEventListener("pointermove",i=>{if(!e)return;const a=i.clientX-e.x,n=i.clientY-e.y;if(e.x=i.clientX,e.y=i.clientY,this.mode==="3d")if(e.btn===0&&!i.shiftKey)this.cam.yaw-=a*.006,this.cam.pitch=Math.min(1.5,Math.max(.05,this.cam.pitch+n*.006));else{const s=this.cam.dist*.0012,r=[Math.cos(this.cam.yaw),0,-Math.sin(this.cam.yaw)],l=[Math.sin(this.cam.yaw),0,Math.cos(this.cam.yaw)];this.cam.target[0]-=(r[0]*a-l[0]*n)*s,this.cam.target[2]-=(r[2]*a-l[2]*n)*s}else this.view2d.panX+=a*this.dpr,this.view2d.panY-=n*this.dpr;this.needsDraw=!0}),t.addEventListener("wheel",i=>{i.preventDefault();const a=Math.exp(i.deltaY*.001);this.mode==="3d"?this.cam.dist=Math.min(8,Math.max(.15,this.cam.dist*a)):this.view2d.zoom=Math.min(16,Math.max(.2,this.view2d.zoom/a)),this.needsDraw=!0},{passive:!1})}draw(){const t=this.ctx.gl,e=this.canvas.width,i=this.canvas.height;t.bindFramebuffer(t.FRAMEBUFFER,null),t.viewport(0,0,e,i);const a=this.content.geometry,n=this.content.color?1:this.content.overlay?2:0;if(!a){t.clearColor(.09,.09,.1,1),t.clear(t.COLOR_BUFFER_BIT|t.DEPTH_BUFFER_BIT);return}const s=this.heightRatio*a.width;if(this.mode==="2d"){t.disable(t.DEPTH_TEST);const x=a.width/a.height,w=Math.min(e/x,i)*.96*this.view2d.zoom,S=[w*x,w],M=[(e-S[0])/2+this.view2d.panX,(i-S[1])/2+this.view2d.panY];this.prog2d.use(),this.prog2d.set({uH:a,uColor:this.content.color??a,uOverlay:this.content.overlay??a,uMode:n,uHs:s,uSun:[this.sun[0],-this.sun[2],this.sun[1]],uOffset:M,uSize:S,uCanvas:[e,i],uRes:[e,i]}),this.ctx.drawQuad();return}const r=[.62,.72,.85];t.clearColor(r[0],r[1],r[2],1),t.clear(t.COLOR_BUFFER_BIT|t.DEPTH_BUFFER_BIT),t.enable(t.DEPTH_TEST),t.depthFunc(t.LEQUAL);const l=a.width/a.height,{yaw:c,pitch:u,dist:m,target:p}=this.cam,v=[p[0]+Math.sin(c)*Math.cos(u)*m,p[1]+Math.sin(u)*m,p[2]+Math.cos(c)*Math.cos(u)*m],g=Mi(v,p,[0,1,0]),y=Ei(.9,e/i,.01,50),d=Ri(y,g);this.prog3d.use(),this.prog3d.set({uH:a,uColor:this.content.color??a,uOverlay:this.content.overlay??a,uMode:n,uHs:s,uViewProj:d,uGrid:new Int32Array(this.grid),uAspect:l,uHeightScale:this.heightRatio*l,uSun:this.sun,uCam:v,uSky:r}),t.bindVertexArray(this.meshVao),t.drawElements(t.TRIANGLES,this.meshIndexCount,t.UNSIGNED_INT,0),t.bindVertexArray(null),t.disable(t.DEPTH_TEST)}}function ne(o,t){return{nodes:o.map(i=>{const a=E(i.type),n={};for(const s of a.inputs){const r=i.inputs?.[s.key];if(r){const[l,c]=r.split(":");n[s.key]={node:l,port:c??"height"}}else n[s.key]=null}return{id:i.id,type:i.type,x:i.x,y:i.y,params:{...xe(a),...i.params??{}},inputs:n}}),output:t}}const Te={alpine:{label:"Alpine range (Mountain → Erosion → SatMap)",build:()=>ne([{id:"mtn",type:"mountain",x:40,y:60,params:{seed:7,scale:1.6,bulk:.7,warp:.4}},{id:"ero",type:"erosion",x:280,y:60,params:{iterations:500,rain:.6,softness:.55,downcutting:.4},inputs:{height:"mtn"}},{id:"sat",type:"satmap",x:540,y:40,params:{preset:"alpine",snowLine:.72},inputs:{height:"ero:height",flow:"ero:flow"}}],"sat")},canyon:{label:"Canyon (Terrace → Warp → Erosion)",build:()=>ne([{id:"per",type:"perlin",x:40,y:40,params:{seed:21,scale:1.2,octaves:6,gain:.45,warp:.6}},{id:"ter",type:"terrace",x:260,y:40,params:{steps:9,sharpness:.85,uniformity:.55},inputs:{height:"per"}},{id:"wrp",type:"warp",x:470,y:40,params:{strength:.02,scale:6,seed:3},inputs:{height:"ter"}},{id:"ero",type:"erosion",x:680,y:40,params:{iterations:350,rain:.4,softness:.35,deposition:.6,thermal:.3,talusAngle:50},inputs:{height:"wrp"}},{id:"sat",type:"satmap",x:920,y:40,params:{preset:"canyon",snowLine:1.5,rockAngle:50},inputs:{height:"ero:height",flow:"ero:flow"}}],"sat")},island:{label:"Volcanic island (Shape × Mountain)",build:()=>ne([{id:"shape",type:"shape",x:40,y:160,params:{size:.7,falloff:.35,distort:.2,seed:9}},{id:"mtn",type:"mountain",x:40,y:20,params:{seed:3,scale:2.2,bulk:.4,peaks:1.1}},{id:"mul",type:"combine",x:280,y:60,params:{mode:"multiply",ratio:1},inputs:{a:"mtn",b:"shape"}},{id:"ero",type:"erosion",x:500,y:60,params:{iterations:450,rain:.7,softness:.6},inputs:{height:"mul"}},{id:"sat",type:"satmap",x:740,y:40,params:{preset:"volcanic",snowLine:1.5,rockAngle:35},inputs:{height:"ero:height",flow:"ero:flow"}}],"sat")},masks:{label:"Data maps demo (Slope / Flow mixing)",build:()=>ne([{id:"mtn",type:"mountain",x:40,y:60,params:{seed:12,scale:1.8}},{id:"ero",type:"erosion",x:280,y:60,params:{iterations:400},inputs:{height:"mtn"}},{id:"slope",type:"slope",x:520,y:200,params:{minAngle:30,falloff:12},inputs:{height:"ero:height"}},{id:"satA",type:"satmap",x:520,y:20,params:{preset:"tundra",rockStrength:0},inputs:{height:"ero:height",flow:"ero:flow"}},{id:"satB",type:"satmap",x:520,y:110,params:{preset:"volcanic",rockStrength:0,snowLine:1.5},inputs:{height:"ero:height"}},{id:"mix",type:"mixer",x:780,y:60,params:{ratio:1},inputs:{a:"satA:color",b:"satB:color",mask:"slope",height:"ero:height"}}],"mix")}},Ai=[[1024,640,"1024 × 640 (draft)"],[2048,1280,"2048 × 1280"],[4e3,2500,"4000 × 2500 (target)"],[4096,4096,"4096 × 4096"]],Ci=document.getElementById("app");Ci.innerHTML=`
+  <header class="toolbar">
+    <div class="brand">Gaea<span>Web</span></div>
+    <label>Preset <select id="preset"></select></label>
+    <label>Resolution <select id="res"></select></label>
+    <label>Budget <input id="budget" type="number" min="2" max="120" step="1" style="width:52px"> s</label>
+    <label title="Terrain height range as a fraction of map width">Height <input id="hratio" type="range" min="0.05" max="0.5" step="0.01" style="width:80px"><span id="hratioV"></span></label>
+    <label><input id="autoprev" type="checkbox"> Live preview</label>
+    <button id="build" class="btn btn-primary">Build</button>
+    <button id="cancel" class="btn" disabled>Cancel</button>
+    <span class="spacer"></span>
+    <div class="seg"><button id="view2d" class="btn">2D</button><button id="view3d" class="btn active">3D</button><button id="resetcam" class="btn" title="Reset camera">⟲</button></div>
+    <button id="expHeight" class="btn">Export Height PNG16</button>
+    <button id="expRaw" class="btn">RAW16</button>
+    <button id="expColor" class="btn">Color PNG</button>
+    <button id="saveGraph" class="btn" title="Download graph JSON">Save</button>
+    <button id="loadGraph" class="btn" title="Load graph JSON">Load</button>
+  </header>
+  <main class="main">
+    <div class="viewport"><canvas id="gl"></canvas><div id="overlayInfo" class="overlay-info"></div></div>
+    <aside class="props" id="props"></aside>
+  </main>
+  <section class="graph" id="graph"></section>
+  <footer class="status">
+    <div class="progress"><div id="progressBar"></div></div>
+    <span id="statusText">Initialising…</span>
+    <span class="spacer"></span>
+    <span id="gpuInfo"></span>
+  </footer>`;const Je=document.getElementById("gl"),Qe=document.getElementById("statusText"),Li=document.getElementById("progressBar"),Ze=document.getElementById("overlayInfo");let G;try{G=new vt(Je)}catch(o){throw Qe.textContent=o.message,Ze.textContent="WebGL2 with float render targets is required (Chrome, Edge, Firefox or Safari 16+).",o}const z=new xt(G),P=new li(z),h=new gi,$=new Fi(G,z,Je);document.getElementById("gpuInfo").textContent=`${G.caps.renderer} · max texture ${G.caps.maxTextureSize}`;const ke=document.getElementById("preset");for(const[o,t]of Object.entries(Te)){const e=document.createElement("option");e.value=o,e.textContent=t.label,ke.appendChild(e)}const ee=document.getElementById("res");for(const[o,t,e]of Ai){const i=document.createElement("option");i.value=`${o}x${t}`,i.textContent=e,ee.appendChild(i)}ee.value=`${h.settings.width}x${h.settings.height}`;const re=document.getElementById("budget");re.value=String(h.settings.budgetSec);const Z=document.getElementById("hratio"),Ne=document.getElementById("hratioV");Z.value=String(h.settings.heightRatio);Ne.textContent=h.settings.heightRatio.toFixed(2);const le=document.getElementById("autoprev");le.checked=h.settings.autoPreview;ee.addEventListener("change",()=>{const[o,t]=ee.value.split("x").map(Number);h.updateSettings({width:o,height:t})});re.addEventListener("change",()=>h.updateSettings({budgetSec:Math.max(2,Number(re.value)||20)}));Z.addEventListener("input",()=>{h.updateSettings({heightRatio:Number(Z.value)}),Ne.textContent=Number(Z.value).toFixed(2)});le.addEventListener("change",()=>h.updateSettings({autoPreview:le.checked}));ke.addEventListener("change",()=>{h.loadGraph(Te[ke.value].build()),De.fit()});const et=document.getElementById("view2d"),tt=document.getElementById("view3d"),it=o=>{$.mode=o,et.classList.toggle("active",o==="2d"),tt.classList.toggle("active",o==="3d"),$.invalidate()};et.addEventListener("click",()=>it("2d"));tt.addEventListener("click",()=>it("3d"));document.getElementById("resetcam").addEventListener("click",()=>$.resetCamera());const De=new bi(document.getElementById("graph"),h);new xi(document.getElementById("props"),h);let O=null,Q=null,ve=null,Xe;function Ti(){const{width:o,height:t,previewWidth:e}=h.settings,i=Math.min(o,e);return[i,Math.max(16,Math.round(t*i/o))]}function R(o,t){Li.style.width=`${Math.min(100,Math.max(0,o*100)).toFixed(1)}%`,Qe.textContent=t}async function q(o){if(P.building){Q=Q==="full"?"full":o,o==="preview"&&ve==="full"||P.cancel();return}ve=o;const t=h.selected??h.graph.output;if(!t){R(0,"Graph is empty — add a node."),$.setContent({geometry:null,overlay:null,color:null});return}const[e,i]=o==="preview"?Ti():[h.settings.width,h.settings.height];if(Math.max(e,i)>G.caps.maxTextureSize){R(0,`Resolution exceeds GPU max texture size (${G.caps.maxTextureSize}).`);return}const a=document.getElementById("build"),n=document.getElementById("cancel");a.disabled=!0,n.disabled=!1,P.onProgress=R;try{const s=await P.build(h.graph,{width:e,height:i,heightRatio:h.settings.heightRatio,budgetMs:o==="preview"?Math.min(h.settings.budgetSec,6)*1e3:h.settings.budgetSec*1e3,preview:o==="preview"},t);O={preview:o==="preview",width:e,height:i};const r=(s.timeMs/1e3).toFixed(2),l=s.notes.length?` · ${s.notes.join("; ")}`:"";R(1,`${o==="preview"?"Preview":"Build"} ${e}×${i} done in ${r} s (${s.evaluated.length} node${s.evaluated.length===1?"":"s"} recomputed)${l}`),z.pool.trim(),ot()}catch(s){const r=s.message;r==="cancelled"?R(0,"Build cancelled"):(R(0,`Error: ${r}`),console.error(s))}finally{if(a.disabled=!1,n.disabled=!0,ve=null,Q){const s=Q;Q=null,q(s)}}}function Be(){h.settings.autoPreview&&(window.clearTimeout(Xe),Xe=window.setTimeout(()=>void q("preview"),120))}function ue(){const o=h.node(h.selected);if(!o)return null;const t=P.getOutputs(o.id);if(!t)return null;const e=E(o.type),i=e.outputs.find(s=>s.key===h.viewPort)??e.outputs[0],a=t[i.key];if(!a)return null;if(i.kind==="color")return{geometry:t.height??null,overlay:null,color:a};if(e.category==="Data"||e.type==="erosion"&&i.key!=="height"){const s=o.inputs.height;return{geometry:(s?P.getOutputs(s.node)?.[s.port]??null:null)??a,overlay:a,color:null}}return{geometry:a,overlay:null,color:null}}function ot(){const o=ue();if(!o)return;$.heightRatio=h.settings.heightRatio,$.setContent(o);const t=h.node(h.selected),e=E(t.type);Ze.textContent=`${e.title} · ${h.viewPort} · ${o.geometry?.width??0}×${o.geometry?.height??0}${O?.preview?" (preview)":""}`}h.on("graph",Be);h.on("settings",()=>{$.heightRatio=h.settings.heightRatio,$.invalidate(),Be()});h.on("selection",()=>{ue()?ot():Be()});document.getElementById("build").addEventListener("click",()=>void q("full"));document.getElementById("cancel").addEventListener("click",()=>P.cancel());async function at(){return O&&!O.preview&&O.width===h.settings.width&&O.height===h.settings.height&&!P.building?!0:(await q("full"),!!O&&!O.preview)}async function nt(o){if(!await at())return;const t=ue(),e=t?.overlay??t?.geometry;if(!e){R(0,"Nothing to export");return}R(.5,"Reading back height…"),await new Promise(n=>setTimeout(n,10));const i=ui(z,e),a=`terrain_${e.width}x${e.height}`;o==="png"?se(await Ke(e.width,e.height,i,1),`${a}.png`):se(vi(i),`${a}.r16`),R(1,`Exported ${a}.${o==="png"?"png (16-bit grayscale)":"r16 (16-bit little-endian RAW)"}`)}async function Ni(){if(!await at())return;const o=ue();if(!o?.color){R(0,"Select a Color node (SatMap / Mixer) to export a color map");return}R(.5,"Reading back color…"),await new Promise(e=>setTimeout(e,10));const t=ci(z,o.color);se(await Ke(o.color.width,o.color.height,t,4),`color_${o.color.width}x${o.color.height}.png`),R(1,"Exported color PNG")}document.getElementById("expHeight").addEventListener("click",()=>void nt("png"));document.getElementById("expRaw").addEventListener("click",()=>void nt("raw"));document.getElementById("expColor").addEventListener("click",()=>void Ni());document.getElementById("saveGraph").addEventListener("click",()=>{const o=new Blob([JSON.stringify({version:1,settings:h.settings,graph:h.graph},null,2)],{type:"application/json"});se(o,"terrain-graph.json")});document.getElementById("loadGraph").addEventListener("click",()=>{const o=document.createElement("input");o.type="file",o.accept="application/json",o.addEventListener("change",async()=>{const t=o.files?.[0];if(t)try{const e=JSON.parse(await t.text());e.settings&&h.updateSettings(e.settings),h.loadGraph(e.graph),De.fit()}catch(e){R(0,`Could not load graph: ${e.message}`)}}),o.click()});window.addEventListener("beforeunload",()=>{try{localStorage.setItem("gaea-web-graph",JSON.stringify({settings:h.settings,graph:h.graph}))}catch{}});let st=!1;try{const o=localStorage.getItem("gaea-web-graph");if(o&&!location.hash.includes("reset")){const t=JSON.parse(o);t.settings&&h.updateSettings({...t.settings,view:"3d"}),t.graph?.nodes?.length&&(h.loadGraph(t.graph),st=!0)}}catch{}st||h.loadGraph(Te.alpine.build());ee.value=`${h.settings.width}x${h.settings.height}`;re.value=String(h.settings.budgetSec);Z.value=String(h.settings.heightRatio);Ne.textContent=h.settings.heightRatio.toFixed(2);le.checked=h.settings.autoPreview;requestAnimationFrame(()=>{De.fit(),h.settings.autoPreview||q("preview")});window.gaea={state:h,builder:P,engine:z,runBuild:q,viewport:$};</script>
+    <style rel="stylesheet" crossorigin>:root{--bg: #15161a;--panel: #1d1f25;--panel2: #24262e;--border: #30333d;--text: #e6e7eb;--muted: #8b8f9c;--accent: #4f8cff;color-scheme:dark}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}#app{display:grid;grid-template-rows:44px 1fr 280px 28px;height:100vh}.toolbar{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--border);white-space:nowrap;overflow-x:auto}.toolbar label{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}.brand{font-weight:700;font-size:16px;letter-spacing:.5px;margin-right:8px}.brand span{color:var(--accent);font-weight:400}.spacer{flex:1}.btn{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;font:inherit}.btn:hover{border-color:#4a4f5d;background:#2c2f38}.btn:disabled{opacity:.5;cursor:default}.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}.btn-primary:hover{background:#3f7bea}.btn-small{padding:1px 6px}.btn.active{background:#343a4a;border-color:var(--accent)}.seg{display:inline-flex;gap:2px}select,input[type=number]{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font:inherit}.main{display:grid;grid-template-columns:1fr 300px;min-height:0}.viewport{position:relative;background:#0f1013}.viewport canvas{width:100%;height:100%;display:block;cursor:grab}.overlay-info{position:absolute;left:10px;top:8px;color:#fff;background:#00000073;padding:3px 8px;border-radius:4px;font-size:12px;pointer-events:none}.props{background:var(--panel);border-left:1px solid var(--border);overflow-y:auto;padding:10px 12px}.props-empty{color:var(--muted);padding:20px 0;text-align:center}.props-title{font-weight:700;font-size:15px}.props-desc{color:var(--muted);font-size:12px;margin:2px 0 10px}.prop-row{display:grid;grid-template-columns:96px 1fr;align-items:center;gap:6px;margin-bottom:7px}.prop-row label{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.slider-wrap{display:flex;gap:6px;align-items:center}.slider-wrap input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}.slider-wrap input[type=number]{width:64px;padding:2px 4px}.props-actions{display:flex;gap:6px;margin-top:14px}.status{display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--panel);border-top:1px solid var(--border);font-size:12px;color:var(--muted)}.progress{width:180px;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}.progress div{height:100%;width:0;background:var(--accent);transition:width .1s}.graph-root{position:relative;display:grid;grid-template-rows:30px 1fr;background:#121317;border-top:1px solid var(--border);overflow:hidden}.graph-toolbar{display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--border)}.graph-toolbar .hint{color:var(--muted);font-size:11px}.graph-world{position:relative;overflow:hidden;background-image:radial-gradient(#2a2d36 1px,transparent 1px);background-size:22px 22px;cursor:grab}.graph-links,.graph-nodes{position:absolute;left:0;top:0;transform-origin:0 0;overflow:visible}.graph-links{width:1px;height:1px;pointer-events:none}.graph-links .link{fill:none;stroke:#7a8196;stroke-width:2px}.graph-links .link.kind-color{stroke:#ec4899}.graph-links .link.dragging{stroke-dasharray:6 4}.node{position:absolute;background:var(--panel2);border:1px solid var(--border);border-radius:6px;box-shadow:0 2px 8px #0006;user-select:none;cursor:default}.node.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 2px 10px #00000080}.node-header{height:26px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;border-radius:5px 5px 0 0;color:#fff;font-weight:600;cursor:grab}.out-badge{display:none;font-size:10px;background:#00000059;padding:1px 5px;border-radius:3px}.node.is-output .out-badge{display:inline}.node-body{display:flex;justify-content:space-between;padding:4px 0}.ports{display:flex;flex-direction:column}.port{height:20px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}.port-in .port{padding-left:0}.port-out .port{justify-content:flex-end;padding-right:0}.dot{width:11px;height:11px;border-radius:50%;background:#5d6475;border:2px solid #121317;cursor:crosshair;flex:none}.port-in .dot{margin-left:-6px}.port-out .dot{margin-right:-6px}.dot.kind-color{background:#ec4899}.dot.connected{background:#a9b1c6}.dot.viewing{box-shadow:0 0 0 2px var(--accent)}.ctx-menu{position:absolute;z-index:10;background:var(--panel2);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px #00000080;padding:4px 0;min-width:160px;max-height:260px;overflow-y:auto}.ctx-cat{padding:4px 10px 2px;font-size:10px;text-transform:uppercase;letter-spacing:.6px}.ctx-item{padding:4px 14px;cursor:pointer}.ctx-item:hover{background:#343a4a}</style>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

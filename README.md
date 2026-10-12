@@ -44,14 +44,23 @@ dendritic drainage. Rain is jittered per pixel each iteration to break grid symm
 All float textures use manual bilinear / bicubic sampling, so only `EXT_color_buffer_float`
 is required (Chrome, Edge, Firefox, Safari 16+).
 
-## Development
+## Running it
+
+**Quickest — no install:** open **`gaea-web.html`** (at the repository root) in Chrome, Edge or
+Firefox. It is a self-contained build; double-clicking the file is enough.
+
+> Do not open `index.html` directly — it is the Vite source entry and only works through the
+> dev server below.
+
+**Development:**
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # static bundle in dist/
+npm run dev              # http://localhost:5173
+npm run build            # static site in dist/ (needs a web server)
+npm run build:standalone # regenerates gaea-web.html (single file, works from file://)
 npm run typecheck
-npm test           # graph + PNG encoder unit tests (vitest)
+npm test                 # graph + PNG encoder unit tests (vitest)
 ```
 
 The app is a static site; `dist/` can be served from any host (GitHub Pages, S3, …).
