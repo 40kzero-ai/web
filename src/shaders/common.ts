@@ -95,13 +95,19 @@ float perlin(vec2 x, uint seed) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 1.4142;
 }
 
-// Perlin with analytic-ish derivative via finite differences in noise space (cheap).
+// Perlin noise with analytic derivative: returns (value, d/dx, d/dy).
 vec3 perlinD(vec2 x, uint seed) {
-  float e = 0.01;
-  float n = perlin(x, seed);
-  float nx = perlin(x + vec2(e, 0.0), seed);
-  float ny = perlin(x + vec2(0.0, e), seed);
-  return vec3(n, (nx - n) / e, (ny - n) / e);
+  vec2 i = floor(x);
+  vec2 f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  ivec2 ii = ivec2(i);
+  vec2 ga = gradDir(ii, seed), gb = gradDir(ii + ivec2(1, 0), seed), gc = gradDir(ii + ivec2(0, 1), seed), gd = gradDir(ii + ivec2(1, 1), seed);
+  float va = dot(ga, f), vb = dot(gb, f - vec2(1.0, 0.0)), vc = dot(gc, f - vec2(0.0, 1.0)), vd = dot(gd, f - vec2(1.0, 1.0));
+  float k = va - vb - vc + vd;
+  float v = va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k;
+  vec2 d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (vec2(vb - va, vc - va) + u.yx * k);
+  return vec3(v, d) * 1.4142;
 }
 
 float valueNoise(vec2 x, uint seed) {

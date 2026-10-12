@@ -42,6 +42,7 @@ export const SatMapNode: NodeDef = {
   inputs: [
     { key: 'height', label: 'In', kind: 'height' },
     { key: 'flow', label: 'Flow', kind: 'height', optional: true },
+    { key: 'water', label: 'Water', kind: 'height', optional: true },
     { key: 'mask', label: 'Mask', kind: 'height', optional: true },
   ],
   outputs: [{ key: 'color', label: 'Color', kind: 'color' }, { key: 'height', label: 'Height', kind: 'height' }],
@@ -60,7 +61,7 @@ export const SatMapNode: NodeDef = {
     const preset = SATMAP_PRESETS[String(p.preset)] ?? SATMAP_PRESETS.alpine;
     const out = engine.alloc(o.width, o.height, 'RGBA8');
     engine.run('satmap', () => `${HEADER}${SAMPLING}${TERRAIN}${NOISE}
-uniform sampler2D uH; uniform sampler2D uFlow; uniform sampler2D uMask; uniform int uHasFlow; uniform int uHasMask;
+uniform sampler2D uH; uniform sampler2D uFlow; uniform sampler2D uMask; uniform sampler2D uWater; uniform int uHasFlow; uniform int uHasMask; uniform int uHasWater;
 uniform vec4 uStops[8]; uniform int uNumStops; uniform float uHs;
 uniform float uRockAngle; uniform float uRockStrength; uniform float uSnowLine; uniform float uFlowTint; uniform float uVariation; uniform int uSeed; uniform float uAspect;
 out vec4 o;
@@ -96,9 +97,15 @@ void main() {
     col = mix(col, col * vec3(0.55, 0.6, 0.62), clamp(f * 1.5, 0.0, 1.0) * uFlowTint);
   }
   if (uHasMask == 1) col *= mix(0.3, 1.0, sampleBilinear(uMask, vUv).r);
+  if (uHasWater == 1) {
+    float w = clamp(sampleBilinear(uWater, vUv).r, 0.0, 1.0);
+    vec3 shallow = vec3(0.26, 0.52, 0.58), deep = vec3(0.05, 0.17, 0.32);
+    vec3 wcol = mix(shallow, deep, smoothstep(0.0, 1.0, w) * 0.7 + 0.3 * (1.0 - h));
+    col = mix(col, wcol, smoothstep(0.15, 0.6, w));
+  }
   o = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 1.1)), 1.0);
 }`, {
-      uH: h, uFlow: inputs.flow ?? h, uMask: inputs.mask ?? h, uHasFlow: inputs.flow ? 1 : 0, uHasMask: inputs.mask ? 1 : 0,
+      uH: h, uFlow: inputs.flow ?? h, uMask: inputs.mask ?? h, uWater: inputs.water ?? h, uHasFlow: inputs.flow ? 1 : 0, uHasMask: inputs.mask ? 1 : 0, uHasWater: inputs.water ? 1 : 0,
       uStops: stopsToArray(preset.stops), uNumStops: preset.stops.length, uHs: o.heightRatio * o.width,
       uRockAngle: Number(p.rockAngle), uRockStrength: Number(p.rockStrength), uSnowLine: Number(p.snowLine), uFlowTint: Number(p.flowTint),
       uVariation: Number(p.variation), uSeed: Number(p.seed) | 0, uAspect: o.width / o.height,

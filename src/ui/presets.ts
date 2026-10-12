@@ -21,10 +21,30 @@ function make(specs: Spec[], output: string): Graph {
 }
 
 export const PRESETS: Record<string, { label: string; build: () => Graph }> = {
+  world: {
+    label: 'Game world (zones → erosion → rivers → sea)',
+    build: () => make([
+      { id: 'cont', type: 'shape', x: 40, y: 20, params: { kind: 'square', size: 1.1, falloff: 0.45, distort: 0.3, seed: 4 } },
+      { id: 'ctrlN', type: 'perlin', x: 40, y: 150, params: { seed: 31, scale: 1.3, octaves: 4, gain: 0.5, warp: 0.5 } },
+      { id: 'ctrl', type: 'combine', x: 270, y: 60, params: { mode: 'multiply', ratio: 1 }, inputs: { a: 'ctrlN', b: 'cont' } },
+      { id: 'low', type: 'hills', x: 270, y: 180, params: { seed: 8, scale: 6, relief: 1, base: 0 } },
+      { id: 'mid', type: 'hills', x: 270, y: 290, params: { seed: 9, scale: 4, roundness: 0.3, relief: 1, base: 0 } },
+      { id: 'mtn', type: 'mountain', x: 270, y: 400, params: { seed: 7, scale: 2.5, stretch: 2.2, angle: 35, bulk: 0.4 } },
+      { id: 'zone', type: 'zonemix', x: 520, y: 120, params: { t1: 0.3, t2: 0.55, softness: 0.12, lowBase: 0.16, lowRelief: 0.08, midBase: 0.18, midRelief: 0.28, highBase: 0.25, highRelief: 0.75 }, inputs: { control: 'ctrl', low: 'low', mid: 'mid', high: 'mtn' } },
+      { id: 'land', type: 'combine', x: 640, y: 260, params: { mode: 'multiply', ratio: 1 }, inputs: { a: 'zone', b: 'cont' } },
+      { id: 'ero', type: 'erosion', x: 760, y: 120, params: { iterations: 400, rain: 0.6, softness: 0.5 }, inputs: { height: 'land' } },
+      { id: 'flow', type: 'flow', x: 1000, y: 120, params: { contrast: 1.5 }, inputs: { height: 'ero:height' } },
+      { id: 'riv', type: 'rivers', x: 1240, y: 120, params: { threshold: 0.6 }, inputs: { height: 'ero:height', flow: 'flow:flow' } },
+      { id: 'sea', type: 'sea', x: 1480, y: 120, params: { level: 0.09 }, inputs: { height: 'riv:height' } },
+      { id: 'water', type: 'combine', x: 1480, y: 260, params: { mode: 'max', ratio: 1 }, inputs: { a: 'sea:water', b: 'riv:rivers' } },
+      { id: 'water2', type: 'combine', x: 1700, y: 260, params: { mode: 'max', ratio: 1 }, inputs: { a: 'water', b: 'flow:lakes' } },
+      { id: 'sat', type: 'satmap', x: 1940, y: 120, params: { preset: 'alpine', snowLine: 0.8, flowTint: 0.35 }, inputs: { height: 'sea:height', flow: 'flow:flow', water: 'water2' } },
+    ], 'sat'),
+  },
   alpine: {
     label: 'Alpine range (Mountain → Erosion → SatMap)',
     build: () => make([
-      { id: 'mtn', type: 'mountain', x: 40, y: 60, params: { seed: 7, scale: 1.6, bulk: 0.7, warp: 0.4 } },
+      { id: 'mtn', type: 'mountain', x: 40, y: 60, params: { seed: 7, scale: 1.8, bulk: 0.6, warp: 0.3, stretch: 2, angle: 25 } },
       { id: 'ero', type: 'erosion', x: 280, y: 60, params: { iterations: 500, rain: 0.6, softness: 0.55, downcutting: 0.4 }, inputs: { height: 'mtn' } },
       { id: 'sat', type: 'satmap', x: 540, y: 40, params: { preset: 'alpine', snowLine: 0.72 }, inputs: { height: 'ero:height', flow: 'ero:flow' } },
     ], 'sat'),

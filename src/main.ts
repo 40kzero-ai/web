@@ -172,10 +172,11 @@ function resolveView(): { geometry: Tex | null; overlay: Tex | null; color: Tex 
   const tex = outputs[port.key];
   if (!tex) return null;
   if (port.kind === 'color') return { geometry: outputs.height ?? null, overlay: null, color: tex };
-  const isMask = def.category === 'Data' || (def.type === 'erosion' && port.key !== 'height');
-  if (isMask) {
+  if (port.isMask) {
+    // Paint the mask over this node's own terrain output, or over its height input.
+    const own = def.outputs.find((o) => o.key === 'height' && !o.isMask) ? outputs.height : null;
     const ref = n.inputs.height;
-    const geo = ref ? builder.getOutputs(ref.node)?.[ref.port] ?? null : null;
+    const geo = own ?? (ref ? builder.getOutputs(ref.node)?.[ref.port] ?? null : null);
     return { geometry: geo ?? tex, overlay: tex, color: null };
   }
   return { geometry: tex, overlay: null, color: null };
@@ -270,7 +271,7 @@ try {
     if (j.graph?.nodes?.length) { state.loadGraph(j.graph); restored = true; }
   }
 } catch { /* ignore */ }
-if (!restored) state.loadGraph(PRESETS.alpine.build());
+if (!restored) state.loadGraph(PRESETS.world.build());
 resSel.value = `${state.settings.width}x${state.settings.height}`;
 budgetInput.value = String(state.settings.budgetSec);
 hratio.value = String(state.settings.heightRatio); hratioV.textContent = state.settings.heightRatio.toFixed(2);
@@ -278,4 +279,4 @@ autoprev.checked = state.settings.autoPreview;
 requestAnimationFrame(() => { editor.fit(); if (!state.settings.autoPreview) void runBuild('preview'); });
 
 // Expose for debugging / automated tests.
-(window as unknown as { gaea: unknown }).gaea = { state, builder, engine, runBuild, viewport };
+(window as unknown as { gaea: unknown }).gaea = { state, builder, engine, runBuild, viewport, editor, presets: PRESETS };

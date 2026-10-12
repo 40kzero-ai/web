@@ -81,50 +81,116 @@ export const MountainNode: NodeDef = {
   type: 'mountain',
   title: 'Mountain',
   category: 'Primitive',
-  description: 'Ridged multifractal mountains with bulk shaping and domain warp — a good base for erosion.',
+  description: 'Eroded-looking ridged mountains: slopes damp fine detail so ridgelines stay crisp and flanks stay planar. Stretch and angle align the range.',
   inputs: [],
   outputs: [{ key: 'height', label: 'Out', kind: 'height' }],
   params: [
     ...COMMON_PARAMS(2),
-    { key: 'octaves', label: 'Octaves', type: 'int', default: 10, min: 1, max: 16, step: 1 },
+    { key: 'octaves', label: 'Octaves', type: 'int', default: 11, min: 1, max: 16, step: 1 },
     { key: 'gain', label: 'Persistence', type: 'float', default: 0.5, min: 0.2, max: 0.9, step: 0.01 },
-    { key: 'sharpness', label: 'Ridge sharpness', type: 'float', default: 1.6, min: 0.5, max: 4, step: 0.05 },
-    { key: 'bulk', label: 'Bulk', type: 'float', default: 0.6, min: 0, max: 1, step: 0.01, hint: 'Large scale mass variation' },
-    { key: 'warp', label: 'Warp', type: 'float', default: 0.35, min: 0, max: 2, step: 0.01 },
-    { key: 'peaks', label: 'Peak emphasis', type: 'float', default: 1.3, min: 0.5, max: 3, step: 0.05, hint: 'Power curve applied to the result' },
+    { key: 'sharpness', label: 'Ridge sharpness', type: 'float', default: 1.4, min: 0.5, max: 4, step: 0.05 },
+    { key: 'erosion', label: 'Slope erosion', type: 'float', default: 0.6, min: 0, max: 1, step: 0.01, hint: 'Damps detail on steep flanks (crisp ridges, smooth slopes)' },
+    { key: 'stretch', label: 'Range stretch', type: 'float', default: 1.8, min: 1, max: 5, step: 0.05, hint: 'Elongates ridges into a range' },
+    { key: 'angle', label: 'Range angle', type: 'float', default: 30, min: 0, max: 180, step: 1 },
+    { key: 'bulk', label: 'Bulk', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01, hint: 'Large scale mass variation' },
+    { key: 'warp', label: 'Warp', type: 'float', default: 0.25, min: 0, max: 2, step: 0.01 },
+    { key: 'peaks', label: 'Peak emphasis', type: 'float', default: 1.25, min: 0.5, max: 3, step: 0.05, hint: 'Power curve applied to the result' },
     { key: 'autolevel', label: 'Autolevel', type: 'bool', default: true },
   ],
   evaluate(engine, _inputs, p, o) {
     const out = engine.alloc(o.width, o.height, 'R32F');
-    engine.run('mountain', () => `${HEADER}${SAMPLING}${NOISE}${COORD}
-uniform int uOctaves; uniform float uGain; uniform float uSharp; uniform float uBulk; uniform float uWarp; uniform float uPeaks;
+    engine.run('mountain2', () => `${HEADER}${SAMPLING}${NOISE}${COORD}
+uniform int uOctaves; uniform float uGain; uniform float uSharp; uniform float uErosion; uniform float uStretch; uniform float uAngle;
+uniform float uBulk; uniform float uWarp; uniform float uPeaks;
 out vec4 o;
 void main() {
   vec2 p = coord();
   uint seed = uint(uSeed);
+  float ca = cos(uAngle), sa = sin(uAngle);
+  p = vec2(ca * p.x - sa * p.y, sa * p.x + ca * p.y);
+  p.x /= uStretch;
   if (uWarp > 0.0) p += uWarp * warpVec(p * 0.6, 3, seed + 777u);
-  float sum = 0.0, amp = 1.0, norm = 0.0, weight = 1.0;
-  vec2 q = p;
+  float sum = 0.0, amp = 1.0, norm = 0.0, f = 1.0;
+  vec2 dsum = vec2(0.0);
   for (int i = 0; i < 16; i++) {
     if (i >= uOctaves) break;
-    float n = perlin(q, seed + uint(i) * 131u);
-    n = 1.0 - abs(n);
-    n = pow(max(n, 0.0), uSharp);
-    n *= weight;
-    weight = clamp(n * 2.0, 0.0, 1.0);
-    sum += n * amp; norm += amp; amp *= uGain;
-    q = q * 2.03 + vec2(5.2, 1.3);
+    vec3 nd = perlinD(p * f + vec2(float(i) * 5.2, float(i) * 1.3), seed + uint(i) * 131u);
+    float r = 1.0 - abs(nd.x);
+    float rk = pow(max(r, 1e-4), uSharp);
+    // Accumulate the raw noise gradient (continuous and largest right on ridgelines, where the
+    // ridged value folds) so flanks AND crests damp finer octaves; using the ridged derivative
+    // instead leaves an undamped seam along every ridge.
+    dsum += nd.yz * f * amp;
+    float w = 1.0 / (1.0 + uErosion * 1.5 * dot(dsum, dsum));
+    sum += amp * rk * w;
+    norm += amp;
+    amp *= uGain;
+    f *= 2.03;
   }
   float ridged = sum / norm;
   float bulk = fbm(p * 0.45 + 3.7, 4, 2.0, 0.5, seed + 55u) * 0.5 + 0.5;
-  float h = ridged * mix(1.0, bulk * 1.2, uBulk);
+  float h = ridged * mix(1.0, bulk * 1.3, uBulk);
   o = vec4(pow(max(h, 0.0), uPeaks), 0.0, 0.0, 1.0);
 }`, {
       ...baseUniforms(p, o.width, o.height),
-      uOctaves: Number(p.octaves) | 0, uGain: Number(p.gain), uSharp: Number(p.sharpness),
+      uOctaves: Number(p.octaves) | 0, uGain: Number(p.gain), uSharp: Number(p.sharpness), uErosion: Number(p.erosion),
+      uStretch: Number(p.stretch), uAngle: (Number(p.angle) * Math.PI) / 180,
       uBulk: Number(p.bulk), uWarp: Number(p.warp), uPeaks: Number(p.peaks),
     }, out);
     return { height: finish(engine, out, !!p.autolevel) };
+  },
+};
+
+export const HillsNode: NodeDef = {
+  type: 'hills',
+  title: 'Hills',
+  category: 'Primitive',
+  description: 'Rolling hills and lowlands: smooth, slope-damped noise. Use low Relief for plains.',
+  inputs: [],
+  outputs: [{ key: 'height', label: 'Out', kind: 'height' }],
+  params: [
+    ...COMMON_PARAMS(3),
+    { key: 'octaves', label: 'Octaves', type: 'int', default: 7, min: 1, max: 12, step: 1 },
+    { key: 'gain', label: 'Persistence', type: 'float', default: 0.42, min: 0.2, max: 0.8, step: 0.01 },
+    { key: 'roundness', label: 'Roundness', type: 'float', default: 0.6, min: 0, max: 1, step: 0.01, hint: 'Softens crests' },
+    { key: 'relief', label: 'Relief', type: 'float', default: 0.35, min: 0.02, max: 1, step: 0.01, hint: 'Output amplitude' },
+    { key: 'base', label: 'Base height', type: 'float', default: 0.08, min: 0, max: 1, step: 0.01 },
+  ],
+  evaluate(engine, _inputs, p, o) {
+    const raw = engine.alloc(o.width, o.height, 'R32F');
+    engine.run('hills', () => `${HEADER}${SAMPLING}${NOISE}${COORD}
+uniform int uOctaves; uniform float uGain; uniform float uRound;
+out vec4 o;
+void main() {
+  vec2 p = coord();
+  uint seed = uint(uSeed);
+  float sum = 0.0, amp = 1.0, norm = 0.0, f = 1.0;
+  vec2 dsum = vec2(0.0);
+  for (int i = 0; i < 12; i++) {
+    if (i >= uOctaves) break;
+    vec3 nd = perlinD(p * f + vec2(float(i) * 3.1, float(i) * 7.7), seed + uint(i) * 131u);
+    float v = nd.x;
+    dsum += nd.yz * f * amp;
+    float w = 1.0 / (1.0 + 2.0 * dot(dsum, dsum));
+    sum += amp * v * w;
+    norm += amp;
+    amp *= uGain;
+    f *= 2.0;
+  }
+  float h = sum / norm * 0.5 + 0.5;
+  // roundness: ease towards smooth crests
+  h = mix(h, smoothstep(0.0, 1.0, h), uRound);
+  o = vec4(h, 0.0, 0.0, 1.0);
+}`, { ...baseUniforms(p, o.width, o.height), uOctaves: Number(p.octaves) | 0, uGain: Number(p.gain), uRound: Number(p.roundness) }, raw);
+    const norm = engine.normalize(raw);
+    engine.release(raw);
+    const out = engine.alloc(o.width, o.height, 'R32F');
+    engine.run('hills_scale', () => `${HEADER}
+uniform sampler2D uSrc; uniform float uRelief; uniform float uBase; out vec4 o;
+void main() { o = vec4(clamp(uBase + texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r * uRelief, 0.0, 1.0), 0.0, 0.0, 1.0); }`,
+      { uSrc: norm, uRelief: Number(p.relief), uBase: Number(p.base) }, out);
+    engine.release(norm);
+    return { height: out };
   },
 };
 
@@ -264,4 +330,4 @@ export const ConstantNode: NodeDef = {
   },
 };
 
-export const PRIMITIVES: NodeDef[] = [MountainNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];
+export const PRIMITIVES: NodeDef[] = [MountainNode, HillsNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];

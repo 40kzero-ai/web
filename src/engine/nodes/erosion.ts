@@ -38,9 +38,9 @@ export const ErosionNode: NodeDef = {
   ],
   outputs: [
     { key: 'height', label: 'Out', kind: 'height' },
-    { key: 'flow', label: 'Flow', kind: 'height' },
-    { key: 'wear', label: 'Wear', kind: 'height' },
-    { key: 'deposit', label: 'Deposit', kind: 'height' },
+    { key: 'flow', label: 'Flow', kind: 'height', isMask: true },
+    { key: 'wear', label: 'Wear', kind: 'height', isMask: true },
+    { key: 'deposit', label: 'Deposit', kind: 'height', isMask: true },
   ],
   params: [
     { key: 'iterations', label: 'Duration', type: 'int', default: 500, min: 10, max: 4000, step: 10, hint: 'Iterations at the finest level; the build time budget may shorten this' },

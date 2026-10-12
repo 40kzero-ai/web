@@ -4,8 +4,9 @@ import { EROSION_NODES } from './erosion';
 import { MODIFIERS } from './modifiers';
 import { DATA_NODES } from './data';
 import { COLOR_NODES } from './color';
+import { HYDROLOGY_NODES } from './hydrology';
 
-export const ALL_NODES: NodeDef[] = [...PRIMITIVES, ...EROSION_NODES, ...MODIFIERS, ...DATA_NODES, ...COLOR_NODES];
+export const ALL_NODES: NodeDef[] = [...PRIMITIVES, ...EROSION_NODES, ...MODIFIERS, ...DATA_NODES, ...HYDROLOGY_NODES, ...COLOR_NODES];
 export const NODE_DEFS = new Map(ALL_NODES.map((d) => [d.type, d]));
 
 export function nodeDef(type: string): NodeDef {

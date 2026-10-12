@@ -293,4 +293,55 @@ void main() { o = vec4(1.0 - texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0).r, 0.0,
   },
 };
 
-export const MODIFIERS: NodeDef[] = [CombineNode, WarpNode, TerraceNode, BlurNode, LevelsNode, AutolevelNode, ClampNode, AdjustNode, InvertNode];
+
+export const ZoneMixNode: NodeDef = {
+  type: 'zonemix',
+  title: 'Zone Mix',
+  category: 'Modifier',
+  description: 'Builds a varied world from a control map: lowlands where the control is low, hills in the middle, mountains where it is high. Each zone has its own relief and base height.',
+  inputs: [
+    { key: 'control', label: 'Control', kind: 'height' },
+    { key: 'low', label: 'Lowland', kind: 'height' },
+    { key: 'mid', label: 'Hills', kind: 'height' },
+    { key: 'high', label: 'Mountain', kind: 'height' },
+  ],
+  outputs: [{ key: 'height', label: 'Out', kind: 'height' }, { key: 'mountainMask', label: 'Mtn mask', kind: 'height', isMask: true }],
+  params: [
+    { key: 't1', label: 'Hills start', type: 'float', default: 0.35, min: 0, max: 1, step: 0.01 },
+    { key: 't2', label: 'Mountain start', type: 'float', default: 0.6, min: 0, max: 1, step: 0.01 },
+    { key: 'softness', label: 'Transition', type: 'float', default: 0.15, min: 0.01, max: 0.5, step: 0.01 },
+    { key: 'lowRelief', label: 'Lowland relief', type: 'float', default: 0.12, min: 0, max: 1, step: 0.01 },
+    { key: 'lowBase', label: 'Lowland base', type: 'float', default: 0.1, min: 0, max: 1, step: 0.01 },
+    { key: 'midRelief', label: 'Hills relief', type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
+    { key: 'midBase', label: 'Hills base', type: 'float', default: 0.15, min: 0, max: 1, step: 0.01 },
+    { key: 'highRelief', label: 'Mountain relief', type: 'float', default: 0.75, min: 0, max: 1, step: 0.01 },
+    { key: 'highBase', label: 'Mountain base', type: 'float', default: 0.25, min: 0, max: 1, step: 0.01 },
+  ],
+  evaluate(engine, inputs, p, o) {
+    const c = need(inputs.control, 'Zone Mix control');
+    const lo = need(inputs.low, 'Zone Mix lowland'), mid = need(inputs.mid, 'Zone Mix hills'), hi = need(inputs.high, 'Zone Mix mountain');
+    const out = engine.alloc(o.width, o.height, 'R32F');
+    const mask = engine.alloc(o.width, o.height, 'R32F');
+    engine.run('zonemix', () => `${HEADER}${SAMPLING}
+uniform sampler2D uC; uniform sampler2D uLo; uniform sampler2D uMid; uniform sampler2D uHi;
+uniform vec2 uT; uniform float uSoft; uniform vec2 uLoRB; uniform vec2 uMidRB; uniform vec2 uHiRB;
+layout(location = 0) out vec4 oH; layout(location = 1) out vec4 oM;
+void main() {
+  float c = sampleBilinear(uC, vUv).r;
+  float lo = sampleBilinear(uLo, vUv).r * uLoRB.x + uLoRB.y;
+  float mid = sampleBilinear(uMid, vUv).r * uMidRB.x + uMidRB.y;
+  float hi = sampleBilinear(uHi, vUv).r * uHiRB.x + uHiRB.y;
+  float s1 = smoothstep(uT.x - uSoft, uT.x + uSoft, c);
+  float s2 = smoothstep(uT.y - uSoft, uT.y + uSoft, c);
+  float h = mix(mix(lo, mid, s1), hi, s2);
+  oH = vec4(clamp(h, 0.0, 1.0), 0.0, 0.0, 1.0);
+  oM = vec4(s2, 0.0, 0.0, 1.0);
+}`, {
+      uC: c, uLo: lo, uMid: mid, uHi: hi, uT: [Number(p.t1), Number(p.t2)], uSoft: Number(p.softness),
+      uLoRB: [Number(p.lowRelief), Number(p.lowBase)], uMidRB: [Number(p.midRelief), Number(p.midBase)], uHiRB: [Number(p.highRelief), Number(p.highBase)],
+    }, [out, mask]);
+    return { height: out, mountainMask: mask };
+  },
+};
+
+export const MODIFIERS: NodeDef[] = [CombineNode, ZoneMixNode, WarpNode, TerraceNode, BlurNode, LevelsNode, AutolevelNode, ClampNode, AdjustNode, InvertNode];

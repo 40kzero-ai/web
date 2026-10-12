@@ -2,7 +2,7 @@ import { HEADER, SAMPLING, TERRAIN } from '../../shaders/common';
 import type { NodeDef } from '../types';
 import { blur } from './modifiers';
 
-const IN_OUT = { inputs: [{ key: 'height', label: 'In', kind: 'height' as const }], outputs: [{ key: 'height', label: 'Out', kind: 'height' as const }] };
+const IN_OUT = { inputs: [{ key: 'height', label: 'In', kind: 'height' as const }], outputs: [{ key: 'height', label: 'Out', kind: 'height' as const, isMask: true }] };
 
 export const SlopeNode: NodeDef = {
   type: 'slope',

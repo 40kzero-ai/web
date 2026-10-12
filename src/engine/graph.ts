@@ -41,6 +41,8 @@ export interface PortDef {
   label: string;
   kind: PortKind;
   optional?: boolean;
+  /** Output is a 0..1 mask rather than terrain; the viewport paints it over the node's height. */
+  isMask?: boolean;
 }
 
 export function topoSort(graph: Graph): NodeInstance[] {
