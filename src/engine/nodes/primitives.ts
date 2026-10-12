@@ -410,4 +410,88 @@ void main() {
   },
 };
 
-export const PRIMITIVES: NodeDef[] = [MountainNode, HillsNode, VolcanoNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];
+
+export const RangeNode: NodeDef = {
+  type: 'range',
+  title: 'Range',
+  category: 'Primitive',
+  description: 'A single mountain range: a broad belt along a wandering divide, filled with peak massifs and sub-ridges, with spurs running off the divide and concave flanks to the foot. Follow with Fluvial and Erosion.',
+  inputs: [],
+  outputs: [{ key: 'height', label: 'Out', kind: 'height' }, { key: 'mask', label: 'Range mask', kind: 'height', isMask: true }],
+  params: [
+    { key: 'seed', label: 'Seed', type: 'seed', default: 5, min: 0, max: 99999, step: 1 },
+    { key: 'angle', label: 'Direction', type: 'float', default: 20, min: 0, max: 180, step: 1 },
+    { key: 'length', label: 'Length', type: 'float', default: 1.0, min: 0.2, max: 1.5, step: 0.01, hint: 'Fraction of map width' },
+    { key: 'width', label: 'Half width', type: 'float', default: 0.42, min: 0.05, max: 0.8, step: 0.01, hint: 'Fraction of map height' },
+    { key: 'bend', label: 'Crest wander', type: 'float', default: 0.8, min: 0, max: 1.5, step: 0.01 },
+    { key: 'concavity', label: 'Flank concavity', type: 'float', default: 1.5, min: 0.8, max: 4, step: 0.05, hint: 'Steep near the crest, gentle at the foot' },
+    { key: 'massif', label: 'Massifs', type: 'float', default: 0.8, min: 0, max: 1, step: 0.01, hint: 'Large peak groups along the divide' },
+    { key: 'massifScale', label: 'Massif size', type: 'float', default: 2.4, min: 1, max: 6, step: 0.1 },
+    { key: 'spur', label: 'Spur ridges', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
+    { key: 'spurScale', label: 'Spur density', type: 'float', default: 4, min: 1, max: 16, step: 0.5 },
+    { key: 'detail', label: 'Rock detail', type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
+    { key: 'foot', label: 'Foothills', type: 'float', default: 0.2, min: 0, max: 0.6, step: 0.01, hint: 'Relief of the land around the range' },
+  ],
+  evaluate(engine, _inputs, p, o) {
+    const raw = engine.alloc(o.width, o.height, 'R32F');
+    const mask = engine.alloc(o.width, o.height, 'R32F');
+    engine.run('range2', () => `${HEADER}${SAMPLING}${NOISE}
+uniform int uSeed; uniform float uAngle; uniform float uLength; uniform float uWidth; uniform float uBend; uniform float uConc;
+uniform float uMassif; uniform float uMassifScale; uniform float uSpur; uniform float uSpurScale; uniform float uDetail; uniform float uFoot; uniform float uAspect;
+layout(location = 0) out vec4 oH; layout(location = 1) out vec4 oM;
+float ridgedFbm(vec2 p, int oct, uint seed, float gain) {
+  float sum = 0.0, amp = 1.0, norm = 0.0, w = 1.0;
+  for (int i = 0; i < 8; i++) {
+    if (i >= oct) break;
+    float n = 1.0 - abs(perlin(p, seed + uint(i) * 131u));
+    n = n * n * w;
+    w = clamp(n * 1.6, 0.0, 1.0);
+    sum += n * amp; norm += amp; amp *= gain; p = p * 2.05 + 7.3;
+  }
+  return sum / norm;
+}
+void main() {
+  uint seed = uint(uSeed);
+  vec2 c = (vUv - 0.5) * vec2(uAspect, 1.0);
+  float ca = cos(uAngle), sa = sin(uAngle);
+  vec2 q = vec2(ca * c.x + sa * c.y, -sa * c.x + ca * c.y);   // divide runs along q.x
+  float halfLen = uLength * uAspect * 0.5;
+  float t = q.x / max(halfLen, 1e-4);
+  // wandering divide with secondary wiggles
+  float yc = uBend * (0.3 * fbm(vec2(q.x * 1.1 + 3.1, 0.7), 2, 2.0, 0.5, seed) + 0.08 * fbm(vec2(q.x * 4.0 + 1.0, 2.2), 2, 2.0, 0.5, seed + 3u));
+  float d = abs(q.y - yc);
+  float taper = 1.0 - smoothstep(0.6, 1.1, abs(t));
+  // belt envelope with an irregular foot line
+  float w = uWidth * (1.0 + 0.4 * fbm(vec2(q.x * 1.6, q.y * 1.6) + 9.0, 3, 2.0, 0.5, seed + 9u));
+  float f = pow(max(1.0 - d / w, 0.0), uConc) * taper;
+  // peak massifs: large ridged noise, slightly stretched along the divide, sharpened
+  vec2 mq = vec2(q.x * 0.8, q.y * 1.1) * uMassifScale;
+  mq += 0.3 * warpVec(mq * 0.7 + 5.0, 2, seed + 17u);
+  float m = ridgedFbm(mq, 3, seed + 11u, 0.55);
+  m = pow(m, 1.4);
+  // spurs: ridged noise stretched perpendicular to the divide
+  vec2 sp = vec2(q.x * uSpurScale, q.y * uSpurScale * 0.3);
+  sp += 0.3 * warpVec(sp * 0.5, 2, seed + 21u);
+  float spur = ridgedFbm(sp, 4, seed + 31u, 0.5);
+  // rock detail
+  float det = ridgedFbm(c * 12.0 + 2.0, 5, seed + 41u, 0.5);
+  float body = mix(1.0, 0.15 + 0.85 * m, uMassif) * mix(1.0, 0.5 + 0.5 * spur, uSpur);
+  float h = f * body;
+  h += uDetail * 0.1 * (det - 0.5) * f;
+  // surrounding land: rugged foothills that merge into the range
+  float foot = uFoot * (fbm(c * 2.5 + 17.0, 6, 2.0, 0.5, seed + 51u) * 0.5 + 0.5);
+  h = max(h, 0.0) + foot * (1.0 - 0.6 * f);
+  oH = vec4(h, 0.0, 0.0, 1.0);
+  oM = vec4(clamp(f * 1.5, 0.0, 1.0), 0.0, 0.0, 1.0);
+}`, {
+      uSeed: Number(p.seed) | 0, uAngle: (Number(p.angle) * Math.PI) / 180, uLength: Number(p.length), uWidth: Number(p.width), uBend: Number(p.bend),
+      uConc: Number(p.concavity), uMassif: Number(p.massif), uMassifScale: Number(p.massifScale), uSpur: Number(p.spur), uSpurScale: Number(p.spurScale),
+      uDetail: Number(p.detail), uFoot: Number(p.foot), uAspect: o.width / o.height,
+    }, [raw, mask]);
+    const height = engine.normalize(raw);
+    engine.release(raw);
+    return { height, mask };
+  },
+};
+
+export const PRIMITIVES: NodeDef[] = [RangeNode, MountainNode, HillsNode, VolcanoNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];

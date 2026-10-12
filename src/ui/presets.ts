@@ -21,6 +21,16 @@ function make(specs: Spec[], output: string): Graph {
 }
 
 export const PRESETS: Record<string, { label: string; build: () => Graph }> = {
+  range: {
+    label: 'Mountain range (Range → Fluvial → Erosion → Thermal)',
+    build: () => make([
+      { id: 'rng', type: 'range', x: 40, y: 60, params: { seed: 5, angle: 20 } },
+      { id: 'flu', type: 'fluvial', x: 280, y: 60, params: { rounds: 24, steps: 8, strength: 1.5, exponent: 0.6, diffusion: 0.03, detail: 0.3, quality: 'medium' }, inputs: { height: 'rng' } },
+      { id: 'ero', type: 'erosion', x: 520, y: 60, params: { droplets: 8, erode: 0.8, capacity: 1.8, radius: 2.5 }, inputs: { height: 'flu:height' } },
+      { id: 'thm', type: 'thermal', x: 760, y: 60, params: { iterations: 20, angle: 42, rate: 0.3 }, inputs: { height: 'ero:height' } },
+      { id: 'sat', type: 'satmap', x: 1000, y: 40, params: { preset: 'alpine', snowLine: 0.7, rockAngle: 38, flowTint: 0.4 }, inputs: { height: 'thm', flow: 'ero:flow' } },
+    ], 'sat'),
+  },
   world: {
     label: 'Game world (zones → erosion → rivers → sea)',
     build: () => make([

@@ -30,46 +30,48 @@ void main() {
   o = vec4(max(h, m), 0.0, 0.0, 1.0);
 }`;
 
-/** Steepest-descent (D8) direction on the filled surface: index 0..7, or -1 for a sink. */
+/**
+ * Multiple-flow-direction routing (Freeman / Quinn): each cell sends flow to every lower
+ * neighbour in proportion to slope^p. This pass stores the per-cell weight sum so that the
+ * accumulation pass can evaluate any neighbour's fraction with one extra read.
+ * Output: r = sum of slope^p over lower neighbours (0 = sink), g = steepest slope.
+ */
 export const FLOW_DIR = `${HEADER}${SAMPLING}
-uniform sampler2D uW;
+uniform sampler2D uW; uniform float uExp;
 out vec4 o;
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   float w = texelFetch(uW, p, 0).r;
-  float best = 0.0; float idx = -1.0; int k = 0;
+  float sum = 0.0, best = 0.0;
   for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
     if (dx == 0 && dy == 0) continue;
     ivec2 q = p + ivec2(dx, dy);
-    if (q.x >= 0 && q.y >= 0 && q.x < uRes.x && q.y < uRes.y) {
-      float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
-      float s = (w - texelFetch(uW, q, 0).r) / dist;
-      if (s > best) { best = s; idx = float(k); }
-    }
-    k++;
+    if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) continue;
+    float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
+    float s = (w - texelFetch(uW, q, 0).r) / dist;
+    if (s > 0.0) { sum += pow(s, uExp); best = max(best, s); }
   }
-  o = vec4(idx, 0.0, 0.0, 1.0);
+  o = vec4(sum, best, 0.0, 1.0);
 }`;
 
-/** Accumulation Jacobi step: A' = 1 + sum of upstream neighbours' A. Neighbour order matches FLOW_DIR. */
+/** Accumulation Jacobi step with MFD partition: A' = 1 + sum_n A_n * slope(n->p)^p / sum_n. */
 export const FLOW_ACC = `${HEADER}${SAMPLING}
-uniform sampler2D uDir; uniform sampler2D uA;
+uniform sampler2D uW; uniform sampler2D uDir; uniform sampler2D uA; uniform float uExp;
 out vec4 o;
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
+  float wp = texelFetch(uW, p, 0).r;
   float acc = 1.0;
-  int k = 0;
   for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
     if (dx == 0 && dy == 0) continue;
     ivec2 q = p + ivec2(dx, dy);
-    if (q.x >= 0 && q.y >= 0 && q.x < uRes.x && q.y < uRes.y) {
-      // neighbour q flows into p when its direction index points back at (-dx,-dy)
-      int back = (1 - dy) * 3 + (1 - dx);
-      if (back > 4) back--;   // skip the centre slot
-      float d = texelFetch(uDir, q, 0).r;
-      if (int(d) == back) acc += texelFetch(uA, q, 0).r;
-    }
-    k++;
+    if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) continue;
+    float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
+    float s = (texelFetch(uW, q, 0).r - wp) / dist;   // neighbour q is higher -> it drains into p
+    if (s <= 0.0) continue;
+    float sumq = texelFetch(uDir, q, 0).r;
+    if (sumq <= 0.0) continue;
+    acc += texelFetch(uA, q, 0).r * pow(s, uExp) / sumq;
   }
   o = vec4(acc, 0.0, 0.0, 1.0);
 }`;

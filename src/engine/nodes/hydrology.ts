@@ -6,6 +6,9 @@ import { HEADER, SAMPLING } from '../../shaders/common';
 import { FILL_INIT, FILL_ITER, FLOW_DIR, FLOW_ACC, FLOW_INIT, FLOW_FINISH } from '../../shaders/hydrology';
 import { blur } from './modifiers';
 
+/** Slope exponent of the multiple-flow-direction partition (1.1 Freeman; higher = more convergent). */
+const MFD_EXP = 1.6;
+
 function pyramid(W: number, H: number, minW = 256): { w: number; h: number }[] {
   const levels: { w: number; h: number }[] = [];
   let w = W, h = H;
@@ -47,13 +50,13 @@ export async function computeFlow(engine: Engine, height: Tex, opts: EvalOptions
     engine.release(wB);
     // --- direction + accumulation ---
     const dir = engine.alloc(L.w, L.h, 'R32F');
-    engine.run('flow_dir', () => FLOW_DIR, { uW: wA }, dir);
+    engine.run('flow_dir', () => FLOW_DIR, { uW: wA, uExp: MFD_EXP }, dir);
     let aA = engine.alloc(L.w, L.h, 'R32F');
     let aB = engine.alloc(L.w, L.h, 'R32F');
     engine.run('flow_init', () => FLOW_INIT, { uPrev: prevA ?? h, uHasPrev: prevA ? 1 : 0, uScale: prevA ? (L.w / prevA.width) * (L.h / prevA.height) : 1 }, aA);
     const accIters = li === 0 ? Math.max(L.w, L.h) * 2 : 80;
     for (let i = 0; i < accIters; i++) {
-      engine.run('flow_acc', () => FLOW_ACC, { uDir: dir, uA: aA }, aB);
+      engine.run('flow_acc', () => FLOW_ACC, { uW: wA, uDir: dir, uA: aA, uExp: MFD_EXP }, aB);
       [aA, aB] = [aB, aA];
       if (i % 40 === 39) { await engine.sync(); if (opts.cancelled()) throw new Error('cancelled'); await nextTick(); }
     }
@@ -74,7 +77,7 @@ export const FlowNode: NodeDef = {
   type: 'flow',
   title: 'Flow',
   category: 'Data',
-  description: 'Drainage analysis: fills depressions, routes water downhill (D8) and accumulates flow. Outputs flow map, lake mask and the filled height.',
+  description: 'Drainage analysis: fills depressions, routes water downhill (multiple flow directions) and accumulates flow. Outputs flow map, lake mask and the filled height.',
   heavy: true,
   inputs: [{ key: 'height', label: 'In', kind: 'height' }],
   outputs: [
@@ -189,29 +192,37 @@ void main() {
 
 /** Stream-power erosion step on the simulation grid, with hillslope diffusion. */
 const FLUVIAL_STEP = `${HEADER}${SAMPLING}
-uniform sampler2D uH; uniform sampler2D uA; uniform sampler2D uDir; uniform sampler2D uMask; uniform int uHasMask;
-uniform float uK; uniform float uM; uniform float uDiff; uniform float uHs; uniform float uAref;
+uniform sampler2D uH; uniform sampler2D uA; uniform sampler2D uW; uniform sampler2D uDir; uniform sampler2D uMask; uniform int uHasMask;
+uniform float uK; uniform float uM; uniform float uDiff; uniform float uHs; uniform float uAref; uniform float uExp;
 out vec4 o;
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   float h = texelFetch(uH, p, 0).r;
+  float wp = texelFetch(uW, p, 0).r;
   float m = uHasMask == 1 ? sampleBilinear(uMask, vUv).r : 1.0;
-  int d = int(texelFetch(uDir, p, 0).r);
-  float hn = h; float dist = 1.0;
-  if (d >= 0) {
-    int k = d < 4 ? d : d + 1;           // skip the centre slot
-    ivec2 off = ivec2(k % 3 - 1, k / 3 - 1);
-    hn = fetchC(uH, p + off).r;
-    dist = (off.x != 0 && off.y != 0) ? 1.41421356 : 1.0;
-  }
-  // Implicit stream-power step (Braun & Willett style): h' = (h + c*hn) / (1 + c), c = K A^m / dist.
-  // Unconditionally stable and never overshoots the receiver, so big rivers grade smoothly instead
-  // of being clamped into flat floors.
+  float sumw = texelFetch(uDir, p, 0).r;
   float a = max(texelFetch(uA, p, 0).r, 1.0) / uAref;
-  float c = (d >= 0 && hn < h) ? uK * pow(a, uM) * m / dist : 0.0;
-  float hh = (h + c * hn) / (1.0 + c);
-  // hillslope diffusion: smooths small bumps, rounds crests, keeps valleys
-  float l = fetchC(uH, p + ivec2(-1, 0)).r + fetchC(uH, p + ivec2(1, 0)).r + fetchC(uH, p + ivec2(0, -1)).r + fetchC(uH, p + ivec2(0, 1)).r;
+  float kA = uK * pow(a, uM) * m;
+  // Implicit stream-power step over all MFD receivers: h' = (h + sum c_i hn_i) / (1 + sum c_i).
+  float num = h, den = 1.0;
+  float l = 0.0;
+  if (sumw > 0.0) {
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+      if (dx == 0 && dy == 0) continue;
+      ivec2 q = p + ivec2(dx, dy);
+      if (q.x < 0 || q.y < 0 || q.x >= uRes.x || q.y >= uRes.y) continue;
+      float dist = (dx != 0 && dy != 0) ? 1.41421356 : 1.0;
+      float s = (wp - texelFetch(uW, q, 0).r) / dist;
+      if (s <= 0.0) continue;
+      float frac = pow(s, uExp) / sumw;
+      float hn = texelFetch(uH, q, 0).r;
+      if (hn >= h) continue;
+      float c = kA * frac / dist;
+      num += c * hn; den += c;
+    }
+  }
+  float hh = num / den;
+  l = fetchC(uH, p + ivec2(-1, 0)).r + fetchC(uH, p + ivec2(1, 0)).r + fetchC(uH, p + ivec2(0, -1)).r + fetchC(uH, p + ivec2(0, 1)).r;
   hh += uDiff * m * (l * 0.25 - h);
   o = vec4(hh, 0.0, 0.0, 1.0);
 }`;
@@ -242,7 +253,7 @@ export const FluvialNode: NodeDef = {
   params: [
     { key: 'rounds', label: 'Rounds', type: 'int', default: 10, min: 1, max: 60, step: 1, hint: 'Flow is re-routed each round' },
     { key: 'steps', label: 'Steps / round', type: 'int', default: 8, min: 1, max: 30, step: 1 },
-    { key: 'strength', label: 'Incision', type: 'float', default: 0.5, min: 0, max: 2, step: 0.01 },
+    { key: 'strength', label: 'Incision', type: 'float', default: 1.0, min: 0, max: 3, step: 0.01 },
     { key: 'exponent', label: 'Area exponent', type: 'float', default: 0.5, min: 0.2, max: 1, step: 0.05, hint: 'Higher favours big rivers over small streams' },
     { key: 'diffusion', label: 'Smoothing', type: 'float', default: 0.04, min: 0, max: 0.25, step: 0.005, hint: 'Hillslope diffusion per step; high values melt ridges' },
     { key: 'detail', label: 'Keep input detail', type: 'float', default: 0.35, min: 0, max: 1, step: 0.01, hint: 'Fine detail of the input above the simulation resolution' },
@@ -260,7 +271,7 @@ export const FluvialNode: NodeDef = {
     let hB = engine.alloc(W, H, 'R32F');
     const rounds = Number(p.rounds) | 0, steps = Number(p.steps) | 0;
     const hs = opts.heightRatio * W;
-    const uniforms = { uK: Number(p.strength) * 0.08, uM: Number(p.exponent), uDiff: Number(p.diffusion), uHs: hs, uAref: W * 0.5 };
+    const uniforms = { uK: Number(p.strength) * 0.1, uM: Number(p.exponent), uDiff: Number(p.diffusion), uHs: hs, uAref: W * 0.5 };
     const inRange = engine.minMax(baseLow);
     let flowTex: Tex | null = null;
     let done = 0;
@@ -268,14 +279,13 @@ export const FluvialNode: NodeDef = {
       if (opts.cancelled()) throw new Error('cancelled');
       if (r > 0 && performance.now() > opts.deadline) { opts.progress(1, `Fluvial stopped early by time budget (${done}/${rounds} rounds)`); break; }
       const { A, W: Wfill, dir } = await computeFlow(engine, hA, { ...opts, progress: () => {} }, W, 'Fluvial');
-      engine.release(Wfill);
       for (let k = 0; k < steps; k++) {
-        engine.run('fluvial_step', () => FLUVIAL_STEP, { uH: hA, uA: A, uDir: dir, uMask: inputs.mask ?? hA, uHasMask: inputs.mask ? 1 : 0, ...uniforms }, hB);
+        engine.run('fluvial_step', () => FLUVIAL_STEP, { uH: hA, uA: A, uW: Wfill, uDir: dir, uMask: inputs.mask ?? hA, uHasMask: inputs.mask ? 1 : 0, uExp: MFD_EXP, ...uniforms }, hB);
         [hA, hB] = [hB, hA];
       }
       if (flowTex) engine.release(flowTex);
       flowTex = A;
-      engine.release(dir);
+      engine.release(dir); engine.release(Wfill);
       done++;
       await engine.sync();
       opts.progress(done / rounds, `Fluvial round ${done}/${rounds}`);

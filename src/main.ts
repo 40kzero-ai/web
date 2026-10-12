@@ -277,7 +277,7 @@ try {
     if (j.graph?.nodes?.length) { state.loadGraph(j.graph); restored = true; }
   }
 } catch { /* ignore */ }
-if (!restored) state.loadGraph(PRESETS.world.build());
+if (!restored) state.loadGraph(PRESETS.range.build());
 resSel.value = `${state.settings.width}x${state.settings.height}`;
 budgetInput.value = String(state.settings.budgetSec);
 hratio.value = String(state.settings.heightRatio); hratioV.textContent = state.settings.heightRatio.toFixed(2);
