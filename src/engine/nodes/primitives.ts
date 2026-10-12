@@ -86,12 +86,13 @@ export const MountainNode: NodeDef = {
   outputs: [{ key: 'height', label: 'Out', kind: 'height' }],
   params: [
     ...COMMON_PARAMS(2),
-    { key: 'octaves', label: 'Octaves', type: 'int', default: 11, min: 1, max: 16, step: 1 },
-    { key: 'gain', label: 'Persistence', type: 'float', default: 0.5, min: 0.2, max: 0.9, step: 0.01 },
-    { key: 'sharpness', label: 'Ridge sharpness', type: 'float', default: 1.4, min: 0.5, max: 4, step: 0.05 },
-    { key: 'erosion', label: 'Slope erosion', type: 'float', default: 0.6, min: 0, max: 1, step: 0.01, hint: 'Damps detail on steep flanks (crisp ridges, smooth slopes)' },
+    { key: 'octaves', label: 'Octaves', type: 'int', default: 8, min: 1, max: 16, step: 1, hint: 'Fewer octaves = no pimple-like micro bumps; let erosion add detail' },
+    { key: 'gain', label: 'Persistence', type: 'float', default: 0.47, min: 0.2, max: 0.9, step: 0.01 },
+    { key: 'sharpness', label: 'Ridge sharpness', type: 'float', default: 1.3, min: 0.5, max: 4, step: 0.05 },
+    { key: 'erosion', label: 'Slope erosion', type: 'float', default: 0.7, min: 0, max: 1, step: 0.01, hint: 'Damps detail on steep flanks (crisp ridges, smooth slopes)' },
     { key: 'stretch', label: 'Range stretch', type: 'float', default: 1.8, min: 1, max: 5, step: 0.05, hint: 'Elongates ridges into a range' },
     { key: 'angle', label: 'Range angle', type: 'float', default: 30, min: 0, max: 180, step: 1 },
+    { key: 'angleVar', label: 'Angle variation', type: 'float', default: 60, min: 0, max: 180, step: 1, hint: 'Ranges turn across the map instead of one global grain' },
     { key: 'bulk', label: 'Bulk', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01, hint: 'Large scale mass variation' },
     { key: 'warp', label: 'Warp', type: 'float', default: 0.25, min: 0, max: 2, step: 0.01 },
     { key: 'peaks', label: 'Peak emphasis', type: 'float', default: 1.25, min: 0.5, max: 3, step: 0.05, hint: 'Power curve applied to the result' },
@@ -100,15 +101,20 @@ export const MountainNode: NodeDef = {
   evaluate(engine, _inputs, p, o) {
     const out = engine.alloc(o.width, o.height, 'R32F');
     engine.run('mountain2', () => `${HEADER}${SAMPLING}${NOISE}${COORD}
-uniform int uOctaves; uniform float uGain; uniform float uSharp; uniform float uErosion; uniform float uStretch; uniform float uAngle;
+uniform int uOctaves; uniform float uGain; uniform float uSharp; uniform float uErosion; uniform float uStretch; uniform float uAngle; uniform float uAngleVar;
 uniform float uBulk; uniform float uWarp; uniform float uPeaks;
 out vec4 o;
 void main() {
   vec2 p = coord();
   uint seed = uint(uSeed);
-  float ca = cos(uAngle), sa = sin(uAngle);
-  p = vec2(ca * p.x - sa * p.y, sa * p.x + ca * p.y);
-  p.x /= uStretch;
+  // locally varying range direction: a slow noise field turns the anisotropy across the map
+  float ang = uAngle + uAngleVar * fbm(p * 0.35 + 7.1, 3, 2.0, 0.5, seed + 4242u);
+  float ca = cos(ang), sa = sin(ang);
+  vec2 q0 = vec2(ca * p.x - sa * p.y, sa * p.x + ca * p.y);
+  q0.x /= uStretch;
+  // large-scale bends so ranges curve rather than run straight
+  q0 += 0.35 * warpVec(p * 0.25 + 3.3, 2, seed + 999u);
+  p = q0;
   if (uWarp > 0.0) p += uWarp * warpVec(p * 0.6, 3, seed + 777u);
   float sum = 0.0, amp = 1.0, norm = 0.0, f = 1.0;
   vec2 dsum = vec2(0.0);
@@ -134,7 +140,7 @@ void main() {
 }`, {
       ...baseUniforms(p, o.width, o.height),
       uOctaves: Number(p.octaves) | 0, uGain: Number(p.gain), uSharp: Number(p.sharpness), uErosion: Number(p.erosion),
-      uStretch: Number(p.stretch), uAngle: (Number(p.angle) * Math.PI) / 180,
+      uStretch: Number(p.stretch), uAngle: (Number(p.angle) * Math.PI) / 180, uAngleVar: (Number(p.angleVar ?? 0) * Math.PI) / 180,
       uBulk: Number(p.bulk), uWarp: Number(p.warp), uPeaks: Number(p.peaks),
     }, out);
     return { height: finish(engine, out, !!p.autolevel) };
@@ -330,4 +336,78 @@ export const ConstantNode: NodeDef = {
   },
 };
 
-export const PRIMITIVES: NodeDef[] = [MountainNode, HillsNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];
+
+export const VolcanoNode: NodeDef = {
+  type: 'volcano',
+  title: 'Volcano',
+  category: 'Primitive',
+  description: 'Stratovolcano: concave cone with a crater, irregular outline and radial ridges and gullies. Combine with Hills / Shape for an island, then erode.',
+  inputs: [],
+  outputs: [{ key: 'height', label: 'Out', kind: 'height' }],
+  params: [
+    { key: 'seed', label: 'Seed', type: 'seed', default: 2, min: 0, max: 99999, step: 1 },
+    { key: 'centerX', label: 'Center X', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
+    { key: 'centerY', label: 'Center Y', type: 'float', default: 0.5, min: 0, max: 1, step: 0.01 },
+    { key: 'radius', label: 'Base radius', type: 'float', default: 0.32, min: 0.05, max: 0.8, step: 0.01, hint: 'Fraction of map height' },
+    { key: 'concavity', label: 'Flank concavity', type: 'float', default: 2.2, min: 1, max: 4, step: 0.05, hint: 'Steep summit, gentle foot' },
+    { key: 'crater', label: 'Crater radius', type: 'float', default: 0.08, min: 0, max: 0.5, step: 0.005, hint: 'Relative to base radius' },
+    { key: 'craterDepth', label: 'Crater depth', type: 'float', default: 0.25, min: 0, max: 1, step: 0.01 },
+    { key: 'irregular', label: 'Outline irregularity', type: 'float', default: 0.35, min: 0, max: 1, step: 0.01 },
+    { key: 'ridges', label: 'Radial ridges', type: 'float', default: 0.35, min: 0, max: 1, step: 0.01 },
+    { key: 'ridgeCount', label: 'Ridge count', type: 'float', default: 14, min: 4, max: 40, step: 1 },
+    { key: 'secondary', label: 'Parasitic cones', type: 'float', default: 0.3, min: 0, max: 1, step: 0.01 },
+  ],
+  evaluate(engine, _inputs, p, o) {
+    const out = engine.alloc(o.width, o.height, 'R32F');
+    engine.run('volcano', () => `${HEADER}${SAMPLING}${NOISE}
+uniform int uSeed; uniform vec2 uCenter; uniform float uRadius; uniform float uConc; uniform float uCrater; uniform float uCraterDepth;
+uniform float uIrregular; uniform float uRidges; uniform float uRidgeCount; uniform float uSecondary; uniform float uAspect;
+out vec4 o;
+float cone(vec2 c, float R, float conc, float irr, uint seed, float craterR, float craterD, float ridges, float rc) {
+  float r = length(c);
+  float th = atan(c.y, c.x);
+  // irregular outline: radius varies with angle (low frequency) and with distance (lobes)
+  float wob = fbm(vec2(cos(th), sin(th)) * 2.2 + 11.0, 4, 2.0, 0.5, seed) * irr * 0.5;
+  float Rl = R * (1.0 + wob + 0.25 * irr * fbm(c * 3.0 / R, 3, 2.0, 0.5, seed + 3u));
+  float t = clamp(r / Rl, 0.0, 1.0);
+  float h = pow(1.0 - t, conc);
+  // radial ridges/gullies: ridged noise in polar coordinates, stronger on the flanks
+  float pr = 1.0 - abs(perlin(vec2(th * rc * 0.159155, r / R * 5.0), seed + 9u));
+  float pr2 = 1.0 - abs(perlin(vec2(th * rc * 0.318, r / R * 11.0), seed + 19u));
+  float flank = smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.75, 1.0, t));
+  h += ridges * 0.12 * (pr - 0.5) * flank * h + ridges * 0.05 * (pr2 - 0.5) * flank;
+  // crater
+  float cr = craterR * R;
+  if (cr > 0.0) {
+    float u = clamp(r / cr, 0.0, 1.0);
+    float bowl = (1.0 - u * u);
+    h -= craterD * 0.35 * bowl * smoothstep(1.0, 0.85, u) ;
+  }
+  return max(h, 0.0);
+}
+void main() {
+  vec2 c = (vUv - uCenter) * vec2(uAspect, 1.0);
+  uint seed = uint(uSeed);
+  float h = cone(c, uRadius, uConc, uIrregular, seed, uCrater, uCraterDepth, uRidges, uRidgeCount);
+  // parasitic cones on the lower flank
+  for (int i = 0; i < 3; i++) {
+    if (uSecondary <= 0.0) break;
+    vec2 hv = hash2v(ivec2(i + 1, 0), seed + 77u);
+    float a = hv.x * 6.2831853;
+    float d = uRadius * (0.45 + 0.4 * hv.y);
+    vec2 cc = c - vec2(cos(a), sin(a)) * d;
+    float sc = uRadius * (0.12 + 0.1 * hv.x) ;
+    float sh = cone(cc, sc, 1.6, uIrregular * 0.5, seed + uint(i) * 31u, 0.35, 0.6, uRidges * 0.5, 8.0) * uSecondary * 0.35;
+    h = max(h, sh + h * 0.6);
+  }
+  o = vec4(h, 0.0, 0.0, 1.0);
+}`, {
+      uSeed: Number(p.seed) | 0, uCenter: [Number(p.centerX), Number(p.centerY)], uRadius: Number(p.radius), uConc: Number(p.concavity),
+      uCrater: Number(p.crater), uCraterDepth: Number(p.craterDepth), uIrregular: Number(p.irregular), uRidges: Number(p.ridges), uRidgeCount: Number(p.ridgeCount),
+      uSecondary: Number(p.secondary), uAspect: o.width / o.height,
+    }, out);
+    return { height: out };
+  },
+};
+
+export const PRIMITIVES: NodeDef[] = [MountainNode, HillsNode, VolcanoNode, PerlinNode, VoronoiNode, GradientNode, ShapeNode, ConstantNode];

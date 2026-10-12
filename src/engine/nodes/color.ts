@@ -13,9 +13,9 @@ export const SATMAP_PRESETS: Record<string, { label: string; stops: GradientStop
   canyon: { label: 'Canyon', stops: [
     { t: 0.0, color: [0.35, 0.22, 0.16] }, { t: 0.25, color: [0.62, 0.33, 0.20] }, { t: 0.45, color: [0.80, 0.52, 0.30] },
     { t: 0.6, color: [0.70, 0.40, 0.26] }, { t: 0.8, color: [0.86, 0.68, 0.46] }, { t: 1.0, color: [0.65, 0.58, 0.50] }] },
-  volcanic: { label: 'Volcanic', stops: [
-    { t: 0.0, color: [0.08, 0.08, 0.09] }, { t: 0.3, color: [0.18, 0.16, 0.16] }, { t: 0.6, color: [0.32, 0.28, 0.26] },
-    { t: 0.85, color: [0.50, 0.42, 0.38] }, { t: 1.0, color: [0.72, 0.65, 0.60] }] },
+  volcanic: { label: 'Volcanic island', stops: [
+    { t: 0.0, color: [0.76, 0.70, 0.52] }, { t: 0.06, color: [0.20, 0.36, 0.16] }, { t: 0.22, color: [0.16, 0.30, 0.13] },
+    { t: 0.42, color: [0.30, 0.30, 0.22] }, { t: 0.62, color: [0.22, 0.19, 0.18] }, { t: 0.85, color: [0.12, 0.11, 0.11] }, { t: 1.0, color: [0.30, 0.26, 0.25] }] },
   tundra: { label: 'Tundra', stops: [
     { t: 0.0, color: [0.30, 0.36, 0.30] }, { t: 0.3, color: [0.46, 0.50, 0.38] }, { t: 0.55, color: [0.58, 0.58, 0.52] },
     { t: 0.75, color: [0.80, 0.80, 0.80] }, { t: 1.0, color: [1.0, 1.0, 1.0] }] },

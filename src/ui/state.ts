@@ -11,6 +11,8 @@ export interface Settings {
   autoPreview: boolean;
   previewWidth: number;
   view: '2d' | '3d';
+  /** World seed; every node's seed is offset by it. */
+  worldSeed: number;
 }
 
 type Listener = () => void;
@@ -28,6 +30,7 @@ export class AppState {
     autoPreview: true,
     previewWidth: 1024,
     view: '3d',
+    worldSeed: 1337,
   };
   private listeners = new Map<string, Set<Listener>>();
 

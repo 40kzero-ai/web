@@ -12,6 +12,8 @@ export interface BuildSettings {
   /** Wall-clock budget in ms; heavy nodes shorten their iterations to fit. */
   budgetMs: number;
   preview: boolean;
+  /** Added to every node seed so one number re-rolls the whole graph. */
+  worldSeed?: number;
 }
 
 export interface BuildResult {
@@ -69,7 +71,7 @@ export class Builder {
       for (const n of todo) {
         const inputKeys: Record<string, string | null> = {};
         for (const [k, ref] of Object.entries(n.inputs)) inputKeys[k] = ref ? `${keys.get(ref.node) ?? 'missing'}#${ref.port}` : null;
-        const key = stableStringify({ t: n.type, p: n.params, i: inputKeys, w: settings.width, h: settings.height, r: settings.heightRatio, pv: settings.preview });
+        const key = stableStringify({ t: n.type, p: n.params, i: inputKeys, w: settings.width, h: settings.height, r: settings.heightRatio, pv: settings.preview, s: settings.worldSeed ?? 0 });
         keys.set(n.id, key);
         const cached = this.cache.get(n.id);
         if (!cached || cached.key !== key) dirty.push(n);
@@ -95,7 +97,9 @@ export class Builder {
         }
         const baseProgress = idx / todo.length;
         this.onProgress(baseProgress, `${def.title}…`);
-        const outputs = await def.evaluate(this.engine, inputs, n.params, {
+        const params = { ...n.params };
+        if (typeof params.seed === 'number') params.seed = (Math.round(params.seed) + Math.round(settings.worldSeed ?? 0) * 7919) % 2147483647;
+        const outputs = await def.evaluate(this.engine, inputs, params, {
           width: settings.width,
           height: settings.height,
           heightRatio: settings.heightRatio,

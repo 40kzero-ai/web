@@ -26,6 +26,7 @@ app.innerHTML = `
     <label>Resolution <select id="res"></select></label>
     <label>Budget <input id="budget" type="number" min="2" max="120" step="1" style="width:52px"> s</label>
     <label title="Terrain height range as a fraction of map width">Height <input id="hratio" type="range" min="0.05" max="0.5" step="0.01" style="width:80px"><span id="hratioV"></span></label>
+    <label title="Changes every seed in the graph at once">Seed <input id="seed" type="number" min="0" max="999999" step="1" style="width:70px"><button id="reseed" class="btn btn-small" title="Random world seed">🎲</button></label>
     <label><input id="autoprev" type="checkbox"> Live preview</label>
     <button id="build" class="btn btn-primary">Build</button>
     <button id="cancel" class="btn" disabled>Cancel</button>
@@ -82,6 +83,10 @@ hratio.value = String(state.settings.heightRatio);
 hratioV.textContent = state.settings.heightRatio.toFixed(2);
 const autoprev = document.getElementById('autoprev') as HTMLInputElement;
 autoprev.checked = state.settings.autoPreview;
+const seedInput = document.getElementById('seed') as HTMLInputElement;
+seedInput.value = String(state.settings.worldSeed);
+seedInput.addEventListener('change', () => state.updateSettings({ worldSeed: Math.max(0, Number(seedInput.value) | 0) }));
+document.getElementById('reseed')!.addEventListener('click', () => { const v = Math.floor(Math.random() * 999999); seedInput.value = String(v); state.updateSettings({ worldSeed: v }); });
 
 resSel.addEventListener('change', () => { const [w, h] = resSel.value.split('x').map(Number); state.updateSettings({ width: w, height: h }); });
 budgetInput.addEventListener('change', () => state.updateSettings({ budgetSec: Math.max(2, Number(budgetInput.value) || 20) }));
@@ -137,6 +142,7 @@ async function runBuild(kind: 'preview' | 'full'): Promise<void> {
       width: w, height: h, heightRatio: state.settings.heightRatio,
       budgetMs: kind === 'preview' ? Math.min(state.settings.budgetSec, 6) * 1000 : state.settings.budgetSec * 1000,
       preview: kind === 'preview',
+      worldSeed: state.settings.worldSeed,
     }, target);
     lastBuild = { preview: kind === 'preview', width: w, height: h };
     const secs = (res.timeMs / 1000).toFixed(2);
@@ -276,6 +282,8 @@ resSel.value = `${state.settings.width}x${state.settings.height}`;
 budgetInput.value = String(state.settings.budgetSec);
 hratio.value = String(state.settings.heightRatio); hratioV.textContent = state.settings.heightRatio.toFixed(2);
 autoprev.checked = state.settings.autoPreview;
+seedInput.value = String(state.settings.worldSeed ?? 1337);
+if (state.settings.worldSeed === undefined) state.settings.worldSeed = 1337;
 requestAnimationFrame(() => { editor.fit(); if (!state.settings.autoPreview) void runBuild('preview'); });
 
 // Expose for debugging / automated tests.

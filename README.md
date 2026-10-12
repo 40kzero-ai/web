@@ -9,8 +9,8 @@ Browser-based procedural terrain generator that reproduces the core workflow of
 
 | Category | Nodes |
 | --- | --- |
-| Primitive | Mountain (ridged, slope-damped detail for crisp ridges and planar flanks, range stretch/angle), Hills (rolling lowlands), Perlin (standard / billow / ridged fBm), Voronoi (F1, F2, F2−F1, cell id, edges), Gradient, Shape (island mask), Constant |
-| Erosion | **Erosion** — hydraulic erosion (virtual-pipes shallow water model with sediment transport, depth-limited capacity, optional talus slippage), progressive multi-resolution, outputs *Flow*, *Wear*, *Deposit* data maps. **Thermal** — angle-of-repose scree. **Rivers** — carves channels and valleys where a Flow map exceeds a threshold, outputs a river mask. Optional erodibility mask input on Erosion. |
+| Primitive | Mountain (ridged, slope-damped detail for crisp ridges and planar flanks, range stretch with locally varying direction), Hills (rolling lowlands), Volcano (stratovolcano with crater, irregular outline, radial ridges, parasitic cones), Perlin (standard / billow / ridged fBm), Voronoi (F1, F2, F2−F1, cell id, edges), Gradient, Shape (island mask), Constant |
+| Erosion | **Fluvial** — landscape-evolution erosion: implicit stream-power incision (drainage area × slope) with hillslope diffusion on a flow pyramid; fast, realistic ridge-and-valley ranges. **Erosion** — hydraulic erosion (virtual-pipes shallow water model with sediment transport, depth-limited capacity, optional talus slippage), progressive multi-resolution, outputs *Flow*, *Wear*, *Deposit* data maps. **Thermal** — angle-of-repose scree. **Rivers** — carves channels and valleys where a Flow map exceeds a threshold, outputs a river mask. Optional erodibility mask input on Erosion. |
 | Modifier | **Zone Mix** (lowland / hills / mountain zones driven by a control map, per-zone relief and base), **Sea** (sea level, shore, water mask), Combine (add / subtract / multiply / max / min / blend / screen / overlay / difference, masked), Warp, Terrace, Blur, Levels, Autolevel, Clamp, Adjust, Invert |
 | Data | **Flow** (depression filling + D8 flow accumulation on a resolution pyramid → flow map, lake mask, filled height), Slope, Height (altitude band), Curvature |
 | Color | SatMap (altitude gradient library + slope rock + snow line + flow wetness + water input + variation), Mixer (mask blend of two color maps) |
@@ -18,6 +18,7 @@ Browser-based procedural terrain generator that reproduces the core workflow of
 - Presets include a **Game world** graph: continent shape → Zone Mix (plains / hills / ranges)
   → Erosion → Flow → Rivers → Sea → SatMap with lakes, rivers and sea as water. Every mask
   (rivers, lakes, sea, slope, flow, wear…) can be viewed and exported as a 16-bit PNG for splat maps.
+- **World seed** in the toolbar re-rolls every node at once; node seeds act as offsets.
 - Node editor: drag ports to connect, double-click the canvas to add nodes, right-click for
   options, `Delete` removes. Any output port can be viewed (masks are painted on the terrain).
 - Live preview at 1024 px while editing; **Build** renders the chosen resolution.
