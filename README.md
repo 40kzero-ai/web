@@ -10,7 +10,7 @@ Browser-based procedural terrain generator that reproduces the core workflow of
 | Category | Nodes |
 | --- | --- |
 | Primitive | Mountain (ridged, slope-damped detail for crisp ridges and planar flanks, range stretch with locally varying direction), Hills (rolling lowlands), Volcano (stratovolcano with crater, irregular outline, radial ridges, parasitic cones), Perlin (standard / billow / ridged fBm), Voronoi (F1, F2, F2−F1, cell id, edges), Gradient, Shape (island mask), Constant |
-| Erosion | **Fluvial** — landscape-evolution erosion: implicit stream-power incision (drainage area × slope) with hillslope diffusion on a flow pyramid; fast, realistic ridge-and-valley ranges. **Erosion** — hydraulic erosion (virtual-pipes shallow water model with sediment transport, depth-limited capacity, optional talus slippage), progressive multi-resolution, outputs *Flow*, *Wear*, *Deposit* data maps. **Thermal** — angle-of-repose scree. **Rivers** — carves channels and valleys where a Flow map exceeds a threshold, outputs a river mask. Optional erodibility mask input on Erosion. |
+| Erosion | **Erosion** — particle (droplet) hydraulic erosion: millions of droplets walk the height field, pick up sediment where they accelerate and drop it where they slow, with a brush footprint; batches are splatted additively on the GPU, with per-cell density normalisation so concurrent droplets behave like a sequential simulation. Outputs *Flow*, *Wear*, *Deposit*. **Fluvial** — landscape-evolution erosion: implicit stream-power incision (drainage area × slope) with hillslope diffusion on a flow pyramid; realistic ridge-and-valley ranges. **Erosion (grid)** — the earlier virtual-pipes shallow-water model. **Thermal** — angle-of-repose scree. **Rivers** — carves channels and valleys where a Flow map exceeds a threshold, outputs a river mask. Optional erodibility mask inputs. |
 | Modifier | **Zone Mix** (lowland / hills / mountain zones driven by a control map, per-zone relief and base), **Sea** (sea level, shore, water mask), Combine (add / subtract / multiply / max / min / blend / screen / overlay / difference, masked), Warp, Terrace, Blur, Levels, Autolevel, Clamp, Adjust, Invert |
 | Data | **Flow** (depression filling + D8 flow accumulation on a resolution pyramid → flow map, lake mask, filled height), Slope, Height (altitude band), Curvature |
 | Color | SatMap (altitude gradient library + slope rock + snow line + flow wetness + water input + variation), Mixer (mask blend of two color maps) |
@@ -25,7 +25,7 @@ Browser-based procedural terrain generator that reproduces the core workflow of
 - **Time budget**: the build is time-boxed. Erosion measures its own GPU cost and shortens the
   iteration count to finish inside the budget (default 20 s), reporting what it used.
 - Only changed nodes are recomputed (per-node memoisation keyed on parameters + upstream).
-- 2D hillshade view and 3D orbit view (1024-wide mesh, per-texel normals, fog).
+- 2D hillshade view and 3D orbit view (1024-wide mesh, per-texel normals, ray-marched sun shadows, horizon ambient occlusion, fog).
 - Export: **16-bit grayscale PNG**, **16-bit little-endian RAW (.r16)** of the viewed height /
   mask, and **8-bit RGBA PNG** of a color node. Graphs save / load as JSON and auto-persist.
 

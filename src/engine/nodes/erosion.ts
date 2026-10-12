@@ -27,8 +27,8 @@ function planLevels(erosionW: number, erosionH: number, iterations: number): Lev
 }
 
 export const ErosionNode: NodeDef = {
-  type: 'erosion',
-  title: 'Erosion',
+  type: 'erosion_grid',
+  title: 'Erosion (grid)',
   category: 'Erosion',
   description: 'Hydraulic erosion with sediment transport (virtual pipes), progressive multi-resolution. Outputs Flow, Wear and Deposit data maps.',
   heavy: true,

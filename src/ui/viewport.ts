@@ -15,6 +15,44 @@ export interface ViewContent {
 
 const VIEW2D_FS = `${HEADER}${SAMPLING}
 uniform sampler2D uH; uniform sampler2D uColor; uniform sampler2D uOverlay;
+
+// Soft ray-marched shadow and horizon-based ambient occlusion on the height field.
+// uv in [0,1], h in [0,1]; uHs = height scale in texels. Sun direction in texel space.
+vec2 shadowAO(sampler2D hm, vec2 uv, float h, vec3 sun, float hs) {
+  ivec2 res = textureSize(hm, 0);
+  vec2 texel = 1.0 / vec2(res);
+  vec2 sdir = normalize(sun.xy + 1e-5);
+  float slope = sun.z / max(length(sun.xy), 1e-4);  // rise per texel
+  float shadow = 0.0;
+  float t = 1.5;
+  for (int i = 0; i < 28; i++) {
+    vec2 p = uv + sdir * t * texel;
+    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) break;
+    float hr = (sampleBilinear(hm, p).r - h) * hs;
+    float occl = (hr - slope * t) / t;
+    shadow = max(shadow, occl);
+    t *= 1.22;
+  }
+  float sh = 1.0 - 0.8 * smoothstep(0.0, 0.45, shadow);
+  // AO: average horizon elevation over 8 directions
+  float ao = 0.0;
+  for (int d = 0; d < 8; d++) {
+    float a = float(d) * 0.785398;
+    vec2 dir = vec2(cos(a), sin(a));
+    float horizon = 0.0;
+    float r = 2.0;
+    for (int j = 0; j < 5; j++) {
+      vec2 p = clamp(uv + dir * r * texel, 0.0, 1.0);
+      float hr = (sampleBilinear(hm, p).r - h) * hs;
+      horizon = max(horizon, hr / r);
+      r *= 2.2;
+    }
+    ao += atan(horizon) / 1.5708;
+  }
+  ao = 1.0 - 0.75 * ao / 8.0;
+  return vec2(sh, ao);
+}
+
 uniform int uMode;        // 0 clay, 1 color, 2 overlay
 uniform float uHs; uniform vec3 uSun; uniform vec2 uOffset; uniform vec2 uSize; uniform vec2 uCanvas;
 out vec4 o;
@@ -31,12 +69,13 @@ void main() {
   vec2 g = vec2(r - l, u - d) / (2.0 * e) * uHs;
   vec3 n = normalize(vec3(-g.x, -g.y, 1.0));
   float diff = max(dot(n, normalize(uSun)), 0.0);
-  float amb = 0.35 + 0.15 * n.z;
   float h = sampleBilinearPx(uH, tp).r;
+  vec2 sa = shadowAO(uH, uv, h, normalize(uSun), uHs);
+  float amb = (0.38 + 0.17 * n.z) * sa.y;
   vec3 albedo;
   if (uMode == 1) albedo = sampleBilinear(uColor, uv).rgb;
   else albedo = mix(vec3(0.62, 0.60, 0.56), vec3(0.92, 0.91, 0.88), h);
-  o = vec4(albedo * (diff * 0.85 + amb), 1.0);
+  o = vec4(albedo * (diff * 0.9 * sa.x + amb), 1.0);
 }`;
 
 const TERRAIN_VS = `#version 300 es
@@ -61,6 +100,44 @@ in vec2 vUv; in vec3 vWorld;
 uniform sampler2D uH; uniform sampler2D uColor; uniform sampler2D uOverlay;
 uniform int uMode; uniform float uHs; uniform vec3 uSun; uniform vec3 uCam; uniform vec3 uSky; uniform float uAspect;
 out vec4 o;
+
+// Soft ray-marched shadow and horizon-based ambient occlusion on the height field.
+// uv in [0,1], h in [0,1]; uHs = height scale in texels. Sun direction in texel space.
+vec2 shadowAO(sampler2D hm, vec2 uv, float h, vec3 sun, float hs) {
+  ivec2 res = textureSize(hm, 0);
+  vec2 texel = 1.0 / vec2(res);
+  vec2 sdir = normalize(sun.xy + 1e-5);
+  float slope = sun.z / max(length(sun.xy), 1e-4);  // rise per texel
+  float shadow = 0.0;
+  float t = 1.5;
+  for (int i = 0; i < 28; i++) {
+    vec2 p = uv + sdir * t * texel;
+    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) break;
+    float hr = (sampleBilinear(hm, p).r - h) * hs;
+    float occl = (hr - slope * t) / t;
+    shadow = max(shadow, occl);
+    t *= 1.22;
+  }
+  float sh = 1.0 - 0.8 * smoothstep(0.0, 0.45, shadow);
+  // AO: average horizon elevation over 8 directions
+  float ao = 0.0;
+  for (int d = 0; d < 8; d++) {
+    float a = float(d) * 0.785398;
+    vec2 dir = vec2(cos(a), sin(a));
+    float horizon = 0.0;
+    float r = 2.0;
+    for (int j = 0; j < 5; j++) {
+      vec2 p = clamp(uv + dir * r * texel, 0.0, 1.0);
+      float hr = (sampleBilinear(hm, p).r - h) * hs;
+      horizon = max(horizon, hr / r);
+      r *= 2.2;
+    }
+    ao += atan(horizon) / 1.5708;
+  }
+  ao = 1.0 - 0.75 * ao / 8.0;
+  return vec2(sh, ao);
+}
+
 void main() {
   ivec2 res = textureSize(uH, 0);
   vec2 tp = vUv * vec2(res);
@@ -75,10 +152,12 @@ void main() {
   else albedo = mix(vec3(0.60, 0.58, 0.54), vec3(0.93, 0.92, 0.89), h);
   vec3 sun = normalize(uSun);
   float diff = max(dot(n, sun), 0.0);
-  vec3 ambient = mix(vec3(0.22, 0.2, 0.18), uSky * 0.9, n.y * 0.5 + 0.5) * 0.6;
+  // sun in texel space: world x -> u, world -z -> v
+  vec2 sa = shadowAO(uH, vUv, h, normalize(vec3(sun.x, -sun.z, sun.y)), uHs);
+  vec3 ambient = mix(vec3(0.26, 0.24, 0.22), uSky * 0.95, n.y * 0.5 + 0.5) * 0.8 * sa.y;
   vec3 v = normalize(uCam - vWorld);
-  float spec = pow(max(dot(normalize(sun + v), n), 0.0), 24.0) * 0.08;
-  vec3 col = albedo * (diff * vec3(1.0, 0.96, 0.9) * 1.05 + ambient) + spec;
+  float spec = pow(max(dot(normalize(sun + v), n), 0.0), 24.0) * 0.08 * sa.x;
+  vec3 col = albedo * (diff * vec3(1.0, 0.96, 0.9) * 1.1 * sa.x + ambient) + spec;
   // edge darkening outside map, fog by distance
   float dist = length(uCam - vWorld);
   float fog = 1.0 - exp(-dist * dist * 0.08 / (uAspect * uAspect));
@@ -128,7 +207,7 @@ export class Viewport {
   private grid: [number, number] = [2, 2];
   private cam = { yaw: 0.55, pitch: 0.62, dist: 2.3, target: [0, 0.03, 0] as number[] };
   private view2d = { zoom: 1, panX: 0, panY: 0 };
-  private sun = [-0.55, 0.75, 0.4];
+  private sun = [-0.6, 0.62, 0.45];
   private needsDraw = true;
   private dpr = Math.min(window.devicePixelRatio || 1, 2);
 
